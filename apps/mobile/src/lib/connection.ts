@@ -1,11 +1,11 @@
-import { type AuthClientPresentationMetadata, EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import {
   bootstrapRemoteBearerSession,
   fetchRemoteEnvironmentDescriptor,
 } from "@t3tools/client-runtime";
 import { resolveRemotePairingTarget, stripPairingTokenFromUrl } from "@t3tools/shared/remote";
-import { Platform } from "react-native";
-import { mobileRemoteHttpRuntime } from "./runtime";
+import * as Effect from "effect/Effect";
+import { mobileRuntime } from "./runtime";
 
 export interface RemoteConnectionInput {
   readonly pairingUrl: string;
@@ -18,7 +18,9 @@ export interface SavedRemoteConnection {
   readonly displayUrl: string;
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
-  readonly bearerToken: string;
+  readonly bearerToken: string | null;
+  readonly authenticationMethod?: "bearer" | "dpop";
+  readonly dpopAccessToken?: string;
 }
 
 export type RemoteClientConnectionState =
@@ -37,14 +39,6 @@ export function redactPairingCredential(pairingUrl: string): string {
   }
 }
 
-export function mobileAuthClientMetadata(): AuthClientPresentationMetadata {
-  return {
-    label: "T3 Code Mobile",
-    deviceType: "mobile",
-    ...(Platform.OS === "ios" ? { os: "iOS" } : Platform.OS === "android" ? { os: "Android" } : {}),
-  };
-}
-
 export async function bootstrapRemoteConnection(
   input: RemoteConnectionInput,
 ): Promise<SavedRemoteConnection> {
@@ -52,18 +46,19 @@ export async function bootstrapRemoteConnection(
     pairingUrl: input.pairingUrl,
   });
 
-  const descriptor = await mobileRemoteHttpRuntime.runPromise(
-    fetchRemoteEnvironmentDescriptor({
-      httpBaseUrl: target.httpBaseUrl,
-    }),
-  );
-
-  const bootstrap = await mobileRemoteHttpRuntime.runPromise(
-    bootstrapRemoteBearerSession({
-      httpBaseUrl: target.httpBaseUrl,
-      credential: target.credential,
-      clientMetadata: mobileAuthClientMetadata(),
-    }),
+  const { descriptor, bootstrap } = await mobileRuntime.runPromise(
+    Effect.all(
+      {
+        descriptor: fetchRemoteEnvironmentDescriptor({
+          httpBaseUrl: target.httpBaseUrl,
+        }),
+        bootstrap: bootstrapRemoteBearerSession({
+          httpBaseUrl: target.httpBaseUrl,
+          credential: target.credential,
+        }),
+      },
+      { concurrency: "unbounded" },
+    ),
   );
 
   return {
@@ -73,6 +68,7 @@ export async function bootstrapRemoteConnection(
     displayUrl: target.httpBaseUrl,
     httpBaseUrl: target.httpBaseUrl,
     wsBaseUrl: target.wsBaseUrl,
-    bearerToken: bootstrap.access_token,
+    bearerToken: bootstrap.sessionToken,
+    authenticationMethod: "bearer",
   };
 }
