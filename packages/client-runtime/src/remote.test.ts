@@ -1,10 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient } from "effect/unstable/http";
 
+import { EnvironmentHttpUnauthorizedError } from "@t3tools/contracts";
 import {
   bootstrapRemoteBearerSession,
   fetchRemoteEnvironmentDescriptor,
@@ -14,6 +16,8 @@ import {
   RemoteEnvironmentAuthTimeoutError,
   resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
+
+const isEnvironmentHttpUnauthorizedError = Schema.is(EnvironmentHttpUnauthorizedError);
 
 type FetchCall = readonly [input: RequestInfo | URL, init: RequestInit];
 
@@ -42,10 +46,7 @@ const hangingFetch = () => {
   return { fetchFn, calls };
 };
 
-const provideRemoteHttp =
-  (fetchFn: typeof fetch) =>
-  <A, E, R>(effect: Effect.Effect<A, E, R | HttpClient.HttpClient>) =>
-    effect.pipe(Effect.provide(remoteHttpClientLayer(fetchFn)));
+const provideRemoteHttp = (fetchFn: typeof fetch) => Effect.provide(remoteHttpClientLayer(fetchFn));
 
 const expectFetchCall = (
   calls: ReadonlyArray<FetchCall>,
@@ -109,6 +110,7 @@ describe("remote", () => {
         sessionMethod: "bearer-session-token",
         sessionToken: "bearer-token",
       });
+      expect(DateTime.isUtc(result.expiresAt)).toBe(true);
       expectFetchCall(fetch.calls, 1, {
         url: "https://remote.example.com/api/auth/bootstrap/bearer",
         method: "POST",
@@ -225,6 +227,27 @@ describe("remote", () => {
         "Remote auth endpoint http://remote.example.com/.well-known/t3/environment timed out after 25ms.",
       );
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("revives declared typed errors from remote auth failures", () =>
+    Effect.gen(function* () {
+      const fetch = recordedFetch(
+        Response.json(
+          { _tag: "EnvironmentHttpUnauthorizedError", message: "Authentication required." },
+          { status: 401 },
+        ),
+      );
+
+      const error = yield* issueRemoteWebSocketToken({
+        httpBaseUrl: "https://remote.example.com/",
+        bearerToken: "expired-token",
+      }).pipe(provideRemoteHttp(fetch.fetchFn), Effect.flip);
+
+      expect(isEnvironmentHttpUnauthorizedError(error)).toBe(true);
+      if (isEnvironmentHttpUnauthorizedError(error)) {
+        expect(error.message).toBe("Authentication required.");
+      }
+    }),
   );
 
   it.effect("mints a websocket url that targets the rpc route with a short-lived ws token", () =>

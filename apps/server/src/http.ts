@@ -1,4 +1,5 @@
 import Mime from "@effect/platform-node/Mime";
+import { EnvironmentHttpApi } from "@t3tools/contracts";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -14,6 +15,7 @@ import {
   HttpServerResponse,
   HttpServerRequest,
 } from "effect/unstable/http";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { OtlpTracer } from "effect/unstable/observability";
 
 import {
@@ -28,22 +30,31 @@ import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolve
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { respondToAuthError } from "./auth/http.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
-import {
-  browserApiCorsAllowedHeaders,
-  browserApiCorsAllowedMethods,
-  browserApiCorsHeaders,
-} from "./httpCors.ts";
+import { browserApiCorsHeaders } from "./httpCors.ts";
 
 const PROJECT_FAVICON_CACHE_CONTROL = "public, max-age=3600";
 const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>`;
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 
-export const browserApiCorsLayer = HttpRouter.cors({
-  allowedMethods: [...browserApiCorsAllowedMethods],
-  allowedHeaders: [...browserApiCorsAllowedHeaders],
-  maxAge: 600,
-});
+export const browserApiCorsLayer = HttpRouter.middleware(
+  (httpEffect) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      if (request.method === "OPTIONS") {
+        return HttpServerResponse.empty({
+          status: 204,
+          headers: {
+            ...browserApiCorsHeaders,
+            "access-control-max-age": "600",
+          },
+        });
+      }
+      const response = yield* httpEffect;
+      return HttpServerResponse.setHeaders(response, browserApiCorsHeaders);
+    }),
+  { global: true },
+);
 
 export function isLoopbackHostname(hostname: string): boolean {
   const normalizedHostname = hostname
@@ -67,18 +78,15 @@ const requireAuthenticatedRequest = Effect.gen(function* () {
   yield* serverAuth.authenticateHttpRequest(request);
 });
 
-export const serverEnvironmentRouteLayer = HttpRouter.add(
-  "GET",
-  "/.well-known/t3/environment",
-  Effect.gen(function* () {
-    const descriptor = yield* Effect.service(ServerEnvironment).pipe(
-      Effect.flatMap((serverEnvironment) => serverEnvironment.getDescriptor),
-    );
-    return HttpServerResponse.jsonUnsafe(descriptor, {
-      status: 200,
-      headers: browserApiCorsHeaders,
-    });
-  }),
+export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
+  EnvironmentHttpApi,
+  "metadata",
+  (handlers) =>
+    handlers.handle("descriptor", () =>
+      Effect.service(ServerEnvironment).pipe(
+        Effect.flatMap((serverEnvironment) => serverEnvironment.getDescriptor),
+      ),
+    ),
 );
 
 class DecodeOtlpTraceRecordsError extends Data.TaggedError("DecodeOtlpTraceRecordsError")<{

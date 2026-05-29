@@ -1,5 +1,10 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentHttpUnauthorizedError, EnvironmentId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const decodeEnvironmentHttpUnauthorizedError = Schema.decodeUnknownSync(
+  EnvironmentHttpUnauthorizedError,
+);
 
 let mockSavedRecords: Array<Record<string, unknown>> = [];
 
@@ -7,7 +12,6 @@ const mockResolveRemotePairingTarget = vi.fn();
 const mockFetchRemoteEnvironmentDescriptor = vi.fn();
 const mockBootstrapRemoteBearerSession = vi.fn();
 const mockFetchRemoteSessionState = vi.fn();
-const mockIsRemoteEnvironmentAuthHttpError = vi.fn((_: unknown) => false);
 const mockResolveRemoteWebSocketConnectionUrl = vi.fn();
 const mockRemoteHttpRunPromise = vi.fn((effect: Promise<unknown>) => effect);
 const mockBootstrapSshBearerSession = vi.fn();
@@ -128,7 +132,6 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     })),
     fetchRemoteEnvironmentDescriptor: mockFetchRemoteEnvironmentDescriptor,
     fetchRemoteSessionState: mockFetchRemoteSessionState,
-    isRemoteEnvironmentAuthHttpError: mockIsRemoteEnvironmentAuthHttpError,
     resolveRemoteWebSocketConnectionUrl: mockResolveRemoteWebSocketConnectionUrl,
   };
 });
@@ -183,7 +186,6 @@ describe("addSavedEnvironment", () => {
       authenticated: true,
       role: "owner",
     });
-    mockIsRemoteEnvironmentAuthHttpError.mockReturnValue(false);
     mockResolveRemoteWebSocketConnectionUrl.mockResolvedValue(
       "wss://remote.example.com/?wsToken=remote-token",
     );
@@ -418,14 +420,11 @@ describe("addSavedEnvironment", () => {
 
   it("does not attempt desktop ssh bearer recovery for non-ssh saved environments", async () => {
     mockWriteSavedEnvironmentBearerToken.mockResolvedValue(true);
-    const authError = {
-      status: 401,
+    const authError = decodeEnvironmentHttpUnauthorizedError({
+      _tag: "EnvironmentHttpUnauthorizedError",
       message: "Unauthorized",
-    };
+    });
     mockFetchRemoteSessionState.mockRejectedValueOnce(authError);
-    mockIsRemoteEnvironmentAuthHttpError.mockImplementation(
-      (error: unknown) => error === authError,
-    );
 
     const { addSavedEnvironment, resetEnvironmentServiceForTests } = await import("./service");
 

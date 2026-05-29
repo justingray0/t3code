@@ -6,12 +6,15 @@ import { join } from "node:path";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { EnvironmentOrchestrationHttpApi } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
+import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as CliError from "effect/unstable/cli/CliError";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
@@ -20,10 +23,7 @@ import { cli } from "./bin.ts";
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "./config.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
-import {
-  orchestrationDispatchRouteLayer,
-  orchestrationSnapshotRouteLayer,
-} from "./orchestration/http.ts";
+import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdentityResolver.ts";
 import {
@@ -35,6 +35,7 @@ import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+class ProjectCliHttpApi extends HttpApi.make("environment").add(EnvironmentOrchestrationHttpApi) {}
 
 const runCli = (args: ReadonlyArray<string>) => Command.runWith(cli, { version: "0.0.0" })(args);
 const runCliWithRuntime = (args: ReadonlyArray<string>) =>
@@ -105,9 +106,8 @@ const readPersistedSnapshot = (baseDir: string) =>
 const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const config = yield* makeCliTestServerConfig(baseDir);
-    const routesLayer = Layer.mergeAll(
-      orchestrationSnapshotRouteLayer,
-      orchestrationDispatchRouteLayer,
+    const routesLayer = HttpApiBuilder.layer(ProjectCliHttpApi).pipe(
+      Layer.provide(orchestrationHttpApiLayer),
     );
     const appLayer = HttpRouter.serve(routesLayer, {
       disableListenLog: true,

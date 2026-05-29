@@ -1,18 +1,21 @@
 import {
-  ClientOrchestrationCommand,
+  EnvironmentHttpApi,
+  EnvironmentHttpBadRequestError,
+  EnvironmentHttpInternalServerError,
   OrchestrationDispatchCommandError,
   OrchestrationGetSnapshotError,
-  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRequest } from "effect/unstable/http";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
+import { failEnvironmentHttpAuthError } from "../auth/http.ts";
 import { ServerAuth } from "../auth/Services/ServerAuth.ts";
 import { normalizeDispatchCommand } from "./Normalizer.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 
-const respondToOrchestrationHttpError = (
+const failOrchestrationHttpError = (
   error: OrchestrationDispatchCommandError | OrchestrationGetSnapshotError,
 ) =>
   Effect.gen(function* () {
@@ -21,10 +24,10 @@ const respondToOrchestrationHttpError = (
         message: error.message,
         cause: error.cause,
       });
-      return HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 500 });
+      return yield* new EnvironmentHttpInternalServerError({ message: error.message });
     }
 
-    return HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 400 });
+    return yield* new EnvironmentHttpBadRequestError({ message: error.message });
   });
 
 const authenticateOwnerSession = Effect.gen(function* () {
@@ -39,57 +42,51 @@ const authenticateOwnerSession = Effect.gen(function* () {
   return session;
 });
 
-export const orchestrationSnapshotRouteLayer = HttpRouter.add(
-  "GET",
-  "/api/orchestration/snapshot",
-  Effect.gen(function* () {
-    yield* authenticateOwnerSession;
-    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-    const snapshot = yield* projectionSnapshotQuery.getSnapshot().pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestrationGetSnapshotError({
-            message: "Failed to load orchestration snapshot.",
-            cause,
+export const orchestrationHttpApiLayer = HttpApiBuilder.group(
+  EnvironmentHttpApi,
+  "orchestration",
+  (handlers) =>
+    handlers
+      .handle("snapshot", () =>
+        Effect.gen(function* () {
+          yield* authenticateOwnerSession;
+          const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+          return yield* projectionSnapshotQuery.getSnapshot().pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationGetSnapshotError({
+                  message: "Failed to load orchestration snapshot.",
+                  cause,
+                }),
+            ),
+          );
+        }).pipe(
+          Effect.catchTags({
+            AuthError: failEnvironmentHttpAuthError,
+            OrchestrationDispatchCommandError: failOrchestrationHttpError,
+            OrchestrationGetSnapshotError: failOrchestrationHttpError,
           }),
-      ),
-    );
-    return HttpServerResponse.jsonUnsafe(snapshot satisfies OrchestrationReadModel, {
-      status: 200,
-    });
-  }).pipe(
-    Effect.catchTags({
-      OrchestrationDispatchCommandError: respondToOrchestrationHttpError,
-      OrchestrationGetSnapshotError: respondToOrchestrationHttpError,
-    }),
-  ),
-);
-
-export const orchestrationDispatchRouteLayer = HttpRouter.add(
-  "POST",
-  "/api/orchestration/dispatch",
-  Effect.gen(function* () {
-    yield* authenticateOwnerSession;
-    const orchestrationEngine = yield* OrchestrationEngineService;
-    const command = yield* HttpServerRequest.schemaBodyJson(ClientOrchestrationCommand).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestrationDispatchCommandError({
-            message: "Invalid orchestration command payload.",
-            cause,
+        ),
+      )
+      .handle("dispatch", ({ payload }) =>
+        Effect.gen(function* () {
+          yield* authenticateOwnerSession;
+          const orchestrationEngine = yield* OrchestrationEngineService;
+          const normalizedCommand = yield* normalizeDispatchCommand(payload);
+          return yield* orchestrationEngine.dispatch(normalizedCommand).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to dispatch orchestration command.",
+                  cause,
+                }),
+            ),
+          );
+        }).pipe(
+          Effect.catchTags({
+            AuthError: failEnvironmentHttpAuthError,
+            OrchestrationDispatchCommandError: failOrchestrationHttpError,
           }),
+        ),
       ),
-    );
-    const normalizedCommand = yield* normalizeDispatchCommand(command);
-    const result = yield* orchestrationEngine.dispatch(normalizedCommand).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestrationDispatchCommandError({
-            message: "Failed to dispatch orchestration command.",
-            cause,
-          }),
-      ),
-    );
-    return HttpServerResponse.jsonUnsafe(result, { status: 200 });
-  }).pipe(Effect.catchTag("OrchestrationDispatchCommandError", respondToOrchestrationHttpError)),
 );

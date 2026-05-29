@@ -831,7 +831,8 @@ const bootstrapBearerSession = (
       readonly sessionMethod: string;
       readonly expiresAt: string;
       readonly sessionToken?: string;
-      readonly error?: string;
+      readonly _tag?: string;
+      readonly message?: string;
     };
     return {
       response,
@@ -1234,12 +1235,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
       const body = (yield* response.json) as {
-        readonly error?: string;
+        readonly _tag?: string;
+        readonly message?: string;
       };
 
       assert.equal(response.status, 401);
       assertBrowserApiCorsHeaders(response.headers);
-      assert.equal(body.error, "Authentication required.");
+      assert.equal(body._tag, "EnvironmentHttpUnauthorizedError");
+      assert.equal(body.message, "Authentication required.");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1251,6 +1254,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           cookie: yield* getAuthenticatedSessionCookieHeader(),
         },
+        body: yield* HttpBody.json({}),
       });
       const body = (yield* response.json) as {
         readonly credential: string;
@@ -1274,7 +1278,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const response = yield* HttpClient.post("/api/auth/pairing-token");
+      const response = yield* HttpClient.post("/api/auth/pairing-token", {
+        body: yield* HttpBody.json({}),
+      });
       assert.equal(response.status, 401);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
@@ -1292,6 +1298,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           cookie: ownerCookie,
         },
+        body: yield* HttpBody.json({}),
       });
       const createdBody = (yield* createdResponse.json) as {
         readonly id: string;
@@ -1336,6 +1343,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           cookie: yield* getAuthenticatedSessionCookieHeader(),
         },
+        body: yield* HttpBody.json({}),
       });
       const ownerBody = (yield* ownerResponse.json) as {
         readonly credential: string;
@@ -1347,13 +1355,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           cookie: pairedSessionCookie,
         },
+        body: yield* HttpBody.json({}),
       });
       const pairedBody = (yield* pairedResponse.json) as {
-        readonly error: string;
+        readonly _tag: string;
+        readonly message: string;
       };
 
       assert.equal(pairedResponse.status, 403);
-      assert.equal(pairedBody.error, "Only owner sessions can create pairing credentials.");
+      assert.equal(pairedBody._tag, "EnvironmentHttpForbiddenError");
+      assert.equal(pairedBody.message, "Only owner sessions can create pairing credentials.");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1429,9 +1440,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           cookie: pairedSessionCookieHeader,
         },
+        body: yield* HttpBody.json({}),
       });
       const pairedClientPairingBody = (yield* pairedClientPairingResponse.json) as {
-        readonly error: string;
+        readonly _tag: string;
+        readonly message: string;
       };
 
       assert.equal(listBeforeResponse.status, 200);
@@ -1452,7 +1465,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.lengthOf(clientsAfter, 1);
       assert.equal(clientsAfter[0]?.current, true);
       assert.equal(pairedClientPairingResponse.status, 401);
-      assert.equal(pairedClientPairingBody.error, "Unauthorized request.");
+      assert.equal(pairedClientPairingBody._tag, "EnvironmentHttpUnauthorizedError");
+      assert.equal(pairedClientPairingBody.message, "Unauthorized request.");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1469,6 +1483,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           cookie: ownerCookie,
         },
+        body: yield* HttpBody.json({}),
       });
       const pairingBody = (yield* pairingResponse.json) as {
         readonly credential: string;
@@ -1499,6 +1514,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           cookie: pairedSessionCookie,
         },
+        body: yield* HttpBody.json({}),
       });
 
       assert.equal(revokeResponse.status, 200);
@@ -1516,8 +1532,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(first.response.status, 200);
       assert.equal(second.response.status, 401);
       assert.equal(
-        (second.body as { readonly error?: string }).error,
+        (second.body as { readonly message?: string }).message,
         "Invalid bootstrap credential.",
+      );
+      assert.equal(
+        (second.body as { readonly _tag?: string })._tag,
+        "EnvironmentHttpUnauthorizedError",
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

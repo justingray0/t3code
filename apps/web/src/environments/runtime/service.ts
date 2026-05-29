@@ -7,6 +7,7 @@ import {
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamEvent,
   type ServerConfig,
+  EnvironmentHttpUnauthorizedError,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -15,12 +16,12 @@ import {
   bootstrapRemoteBearerSession,
   fetchRemoteEnvironmentDescriptor,
   fetchRemoteSessionState,
-  isRemoteEnvironmentAuthHttpError,
   resolveRemoteWebSocketConnectionUrl,
 } from "@t3tools/client-runtime";
 
 import { type QueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
+import * as Schema from "effect/Schema";
 import {
   createKnownEnvironment,
   getKnownEnvironmentWsBaseUrl,
@@ -99,6 +100,7 @@ type ThreadDetailSubscriptionEntry = {
 };
 
 const environmentConnections = new Map<EnvironmentId, EnvironmentConnection>();
+const isEnvironmentHttpUnauthorizedError = Schema.is(EnvironmentHttpUnauthorizedError);
 
 function isSavedEnvironmentConnectionCancelledError(
   error: unknown,
@@ -1415,7 +1417,7 @@ async function ensureSavedEnvironmentConnection(
         } catch (error) {
           const isAuthError = activeRecord.desktopSsh
             ? isSshHttpAuthError(error, 401)
-            : isRemoteEnvironmentAuthHttpError(error) && error.status === 401;
+            : isEnvironmentHttpUnauthorizedError(error);
           if (!isAuthError) {
             throw error;
           }
