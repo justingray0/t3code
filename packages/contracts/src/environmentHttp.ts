@@ -43,6 +43,11 @@ import {
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
+  dpop: Schema.optionalKey(Schema.String),
+});
+
+const OptionalDpopProofHeaders = Schema.Struct({
+  dpop: Schema.optionalKey(Schema.String),
 });
 
 export const EnvironmentRequestInvalidReason = Schema.Literals([
@@ -275,6 +280,7 @@ export interface EnvironmentSessionPrincipalShape {
   readonly subject: string;
   readonly method: ServerAuthSessionMethod;
   readonly scopes: ReadonlySet<AuthEnvironmentScope>;
+  readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
 }
 
@@ -338,6 +344,7 @@ export class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     HttpApiEndpoint.get("session", "/api/auth/session", {
       headers: OptionalBearerHeaders,
       success: AuthSessionState,
+      error: [EnvironmentInternalError],
     }),
   )
   .add(
@@ -349,6 +356,7 @@ export class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
   )
   .add(
     HttpApiEndpoint.post("token", "/oauth/token", {
+      headers: OptionalDpopProofHeaders,
       payload: AuthTokenExchangeRequest,
       success: AuthAccessTokenResult,
       error: EnvironmentTokenExchangeErrors,
