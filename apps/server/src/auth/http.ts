@@ -164,25 +164,21 @@ export const environmentAuthenticatedAuthLayer = Layer.effect(
     return (httpEffect) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const session = yield* serverAuth
-          .authenticateHttpRequest(request)
-          .pipe(
-            Effect.catchTag("ServerAuthInvalidCredentialError", (error) =>
-              failEnvironmentAuthInvalid(error.reason),
-            ),
-            Effect.catchTag("ServerAuthInternalError", (error) =>
-              failEnvironmentInternal("internal_error", error),
-            ),
-          );
+        const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
+          Effect.catchTag("ServerAuthInvalidCredentialError", (error) =>
+            failEnvironmentAuthInvalid(error.reason),
+          ),
+          Effect.catchTag("ServerAuthInternalError", (error) =>
+            failEnvironmentInternal("internal_error", error),
+          ),
+        );
         return yield* httpEffect.pipe(
           Effect.provideService(EnvironmentAuthenticatedPrincipal, {
             ...session,
             scopes: new Set(session.scopes),
           }),
         );
-      }).pipe(
-        Effect.catchTag("EnvironmentAuthInvalidError", appendDpopChallengeOnUnauthorized),
-      );
+      }).pipe(Effect.catchTag("EnvironmentAuthInvalidError", appendDpopChallengeOnUnauthorized));
   }),
 );
 
@@ -265,7 +261,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             ? yield* verifyRequestDpopProof({ request }).pipe(
                 Effect.catchTag("ServerAuthInvalidCredentialError", () =>
                   appendDpopChallengeHeader.pipe(
-                    Effect.zipRight(failEnvironmentAuthInvalid("invalid_credential")),
+                    Effect.andThen(failEnvironmentAuthInvalid("invalid_credential")),
                   ),
                 ),
                 Effect.catchTag("ServerAuthInternalError", (error) =>

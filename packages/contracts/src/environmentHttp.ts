@@ -302,6 +302,7 @@ const EnvironmentHttpCloudErrors = [
   EnvironmentHttpForbiddenError,
   EnvironmentHttpConflictError,
   EnvironmentHttpInternalServerError,
+  EnvironmentScopeRequiredError,
 ] as const;
 
 export const EnvironmentCloudRelayConfigResult = Schema.Struct({

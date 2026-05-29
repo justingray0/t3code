@@ -102,10 +102,16 @@ export interface ServerAuthShape {
   ) => Effect.Effect<number, ServerAuthInternalError>;
   readonly authenticateHttpRequest: (
     request: HttpServerRequest.HttpServerRequest,
-  ) => Effect.Effect<AuthenticatedSession, ServerAuthInvalidCredentialError | ServerAuthInternalError>;
+  ) => Effect.Effect<
+    AuthenticatedSession,
+    ServerAuthInvalidCredentialError | ServerAuthInternalError
+  >;
   readonly authenticateWebSocketUpgrade: (
     request: HttpServerRequest.HttpServerRequest,
-  ) => Effect.Effect<AuthenticatedSession, ServerAuthInvalidCredentialError | ServerAuthInternalError>;
+  ) => Effect.Effect<
+    AuthenticatedSession,
+    ServerAuthInvalidCredentialError | ServerAuthInternalError
+  >;
   readonly issueWebSocketTicket: (
     session: Pick<AuthenticatedSession, "sessionId">,
   ) => Effect.Effect<AuthWebSocketTicketResult, ServerAuthInternalError>;

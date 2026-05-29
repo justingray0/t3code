@@ -887,7 +887,9 @@ const exchangeAccessToken = (
       readonly expires_in?: number;
       readonly scope?: string;
       readonly _tag?: string;
-      readonly message?: string;
+      readonly code?: string;
+      readonly reason?: string;
+      readonly traceId?: string;
     }>(response);
     return {
       response,
@@ -1509,7 +1511,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(firstBootstrap.response.status, 200);
       assert.equal(replayBootstrap.response.status, 401);
-      assert.equal(replayBootstrap.body.message, "DPoP proof replayed.");
+      assert.equal(replayBootstrap.body._tag, "EnvironmentAuthInvalidError");
+      assert.equal(replayBootstrap.body.code, "auth_invalid");
+      assert.equal(replayBootstrap.body.reason, "invalid_credential");
+      assert.equal(typeof replayBootstrap.body.traceId, "string");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1581,7 +1586,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       assert.equal(bootstrap.response.status, 401);
-      assert.equal(bootstrap.body.message, "DPoP URL mismatch.");
+      assert.equal(bootstrap.body._tag, "EnvironmentAuthInvalidError");
+      assert.equal(bootstrap.body.code, "auth_invalid");
+      assert.equal(bootstrap.body.reason, "invalid_credential");
+      assert.equal(typeof bootstrap.body.traceId, "string");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1843,16 +1851,18 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const response = yield* fetchEffect(linkStateUrl, {
         headers: { cookie: pairedCookie },
       });
-      const body = yield* responseJsonEffect<{ readonly _tag?: string; readonly message?: string }>(
-        response,
-      );
+      const body = yield* responseJsonEffect<{
+        readonly _tag?: string;
+        readonly code?: string;
+        readonly requiredScope?: string;
+        readonly traceId?: string;
+      }>(response);
 
       assert.equal(response.status, 403);
-      assert.equal(body._tag, "EnvironmentHttpForbiddenError");
-      assert.equal(
-        body.message,
-        "The authenticated token is missing required scope: relay:manage.",
-      );
+      assert.equal(body._tag, "EnvironmentScopeRequiredError");
+      assert.equal(body.code, "insufficient_scope");
+      assert.equal(body.requiredScope, "relay:manage");
+      assert.equal(typeof body.traceId, "string");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

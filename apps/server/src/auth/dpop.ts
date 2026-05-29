@@ -5,7 +5,10 @@ import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 
-import { ServerAuthInternalError, ServerAuthInvalidCredentialError } from "./Services/ServerAuth.ts";
+import {
+  ServerAuthInternalError,
+  ServerAuthInvalidCredentialError,
+} from "./Services/ServerAuth.ts";
 import { ServerSecretStore } from "./Services/ServerSecretStore.ts";
 
 function firstHeaderValue(value: string | undefined): string | undefined {

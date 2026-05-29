@@ -1212,7 +1212,7 @@ function createSavedEnvironmentClient(
               ),
             );
           } catch (error) {
-            if (!isEnvironmentHttpUnauthorizedError(error)) {
+            if (!isEnvironmentAuthInvalidError(error)) {
               throw error;
             }
             const renewed = await renewManagedRelayCredential(record);

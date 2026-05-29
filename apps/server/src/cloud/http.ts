@@ -46,7 +46,7 @@ import * as HttpEffect from "effect/unstable/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
-import { failEnvironmentHttpInternalError, requireEnvironmentScope } from "../auth/http.ts";
+import { requireEnvironmentScope } from "../auth/http.ts";
 import { makeServerSecretStore } from "../auth/Layers/ServerSecretStore.ts";
 import type { ServerSecretStoreShape } from "../auth/Services/ServerSecretStore.ts";
 import { AuthControlPlane, type AuthControlPlaneShape } from "../auth/Services/AuthControlPlane.ts";
@@ -393,7 +393,9 @@ const cloudLinkProofHandler = Effect.fn("environment.cloud.linkProof")(
     yield* appendCloudCredentialResponseHeaders;
     return proof satisfies RelayEnvironmentLinkProof;
   },
-  Effect.catchTag("ServerAuthInternalError", failEnvironmentHttpInternalError),
+  Effect.catchTag("ServerAuthInternalError", (error) =>
+    failEnvironmentCloudInternalError(error.message)(error.cause),
+  ),
   Effect.catchTags({
     PlatformError: failEnvironmentCloudInternalError("Could not generate environment link proof."),
     SecretStoreError: failEnvironmentCloudInternalError(
@@ -448,7 +450,9 @@ const cloudRelayConfigHandler = Effect.fn("environment.cloud.relayConfig")(
     }
     return { ok, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
   },
-  Effect.catchTag("ServerAuthInternalError", failEnvironmentHttpInternalError),
+  Effect.catchTag("ServerAuthInternalError", (error) =>
+    failEnvironmentCloudInternalError(error.message)(error.cause),
+  ),
   Effect.catchTags({
     SchemaError: failEnvironmentCloudInternalError(
       "Could not persist environment relay configuration.",
@@ -617,7 +621,9 @@ const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
     yield* appendCloudCredentialResponseHeaders;
     return response;
   },
-  Effect.catchTag("ServerAuthInternalError", failEnvironmentHttpInternalError),
+  Effect.catchTag("ServerAuthInternalError", (error) =>
+    failEnvironmentCloudInternalError(error.message)(error.cause),
+  ),
   Effect.catchTags({
     PlatformError: failEnvironmentCloudInternalError("Could not answer cloud health request."),
     SecretStoreError: failEnvironmentCloudInternalError("Could not answer cloud health request."),
@@ -737,7 +743,9 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
     yield* appendCloudCredentialResponseHeaders;
     return response;
   },
-  Effect.catchTag("ServerAuthInternalError", failEnvironmentHttpInternalError),
+  Effect.catchTag("ServerAuthInternalError", (error) =>
+    failEnvironmentCloudInternalError(error.message)(error.cause),
+  ),
   Effect.catchTags({
     AuthControlPlaneError: failEnvironmentCloudInternalError(
       "Could not issue cloud connection credential.",
