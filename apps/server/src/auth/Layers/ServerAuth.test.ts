@@ -82,7 +82,7 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
       const serverAuth = yield* ServerAuth;
 
       const pairingCredential = yield* serverAuth.issuePairingCredential();
-      const exchanged = yield* serverAuth.exchangeBootstrapCredential(
+      const exchanged = yield* serverAuth.createBrowserSession(
         pairingCredential.credential,
         requestMetadata,
       );
@@ -91,7 +91,12 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
       );
 
       expect(verified.sessionId.length).toBeGreaterThan(0);
-      expect(verified.scopes).toEqual(["environment:operate"]);
+      expect(verified.scopes).toEqual([
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+      ]);
       expect(verified.subject).toBe("one-time-token");
     }).pipe(Effect.provide(makeServerAuthLayer())),
   );
@@ -104,7 +109,7 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
       const error = yield* serverAuth
         .exchangeBootstrapCredentialForAccessToken(
           pairingCredential.credential,
-          ["environment:operate", "access:manage"],
+          ["orchestration:read", "access:manage"],
           requestMetadata,
         )
         .pipe(Effect.flip);
@@ -128,12 +133,19 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
         ),
       ).toBe(false);
 
-      const exchanged = yield* serverAuth.exchangeBootstrapCredential(token ?? "", requestMetadata);
+      const exchanged = yield* serverAuth.createBrowserSession(token ?? "", requestMetadata);
       const verified = yield* serverAuth.authenticateHttpRequest(
         makeCookieRequest(exchanged.sessionToken),
       );
 
-      expect(verified.scopes).toEqual(["environment:operate", "access:manage"]);
+      expect(verified.scopes).toEqual([
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "access:manage",
+        "relay:manage",
+      ]);
       expect(verified.subject).toBe("administrative-bootstrap");
     }).pipe(Effect.provide(makeServerAuthLayer())),
   );
@@ -144,7 +156,7 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
       Effect.gen(function* () {
         const serverAuth = yield* ServerAuth;
 
-        const administrativeExchange = yield* serverAuth.exchangeBootstrapCredential(
+        const administrativeExchange = yield* serverAuth.createBrowserSession(
           "desktop-bootstrap-token",
           requestMetadata,
         );
@@ -155,7 +167,7 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
           label: "Julius iPhone",
         });
         const listedPairingLinks = yield* serverAuth.listPairingLinks();
-        const clientExchange = yield* serverAuth.exchangeBootstrapCredential(
+        const clientExchange = yield* serverAuth.createBrowserSession(
           pairingCredential.credential,
           {
             ...requestMetadata,

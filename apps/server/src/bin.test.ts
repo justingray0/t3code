@@ -33,7 +33,10 @@ import {
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
-import { environmentOperationAuthLayer } from "./auth/http.ts";
+import {
+  environmentOrchestrationOperationAuthLayer,
+  environmentOrchestrationReadAuthLayer,
+} from "./auth/http.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 class ProjectCliHttpApi extends HttpApi.make("environment").add(EnvironmentOrchestrationHttpApi) {}
@@ -109,7 +112,8 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
     const config = yield* makeCliTestServerConfig(baseDir);
     const routesLayer = HttpApiBuilder.layer(ProjectCliHttpApi).pipe(
       Layer.provide(orchestrationHttpApiLayer),
-      Layer.provide(environmentOperationAuthLayer),
+      Layer.provide(environmentOrchestrationReadAuthLayer),
+      Layer.provide(environmentOrchestrationOperationAuthLayer),
     );
     const appLayer = HttpRouter.serve(routesLayer, {
       disableListenLog: true,
@@ -230,10 +234,24 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
 
       assert.equal(typeof issued.sessionId, "string");
       assert.equal(typeof issued.token, "string");
-      assert.deepEqual(issued.scopes, ["environment:operate", "access:manage"]);
+      assert.deepEqual(issued.scopes, [
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "access:manage",
+        "relay:manage",
+      ]);
       assert.equal(listed.length, 1);
       assert.equal(listed[0]?.sessionId, issued.sessionId);
-      assert.deepEqual(listed[0]?.scopes, ["environment:operate", "access:manage"]);
+      assert.deepEqual(listed[0]?.scopes, [
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "access:manage",
+        "relay:manage",
+      ]);
       assert.equal("token" in (listed[0] ?? {}), false);
     }),
   );

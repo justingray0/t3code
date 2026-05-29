@@ -9,8 +9,8 @@ import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 
 import {
   AuthAccessTokenResult,
-  AuthBootstrapInput,
-  AuthBootstrapResult,
+  AuthBrowserSessionRequest,
+  AuthBrowserSessionResult,
   AuthClientSession,
   AuthCreatePairingCredentialInput,
   AuthPairingCredentialResult,
@@ -20,7 +20,7 @@ import {
   AuthEnvironmentScopes,
   AuthTokenExchangeRequest,
   AuthSessionState,
-  AuthWebSocketTokenResult,
+  AuthWebSocketTicketResult,
   ServerAuthSessionMethod,
 } from "./auth.ts";
 import { AuthSessionId } from "./baseSchemas.ts";
@@ -106,20 +106,49 @@ export interface EnvironmentSessionPrincipalShape {
   readonly expiresAt?: DateTime.DateTime;
 }
 
-export class EnvironmentOperationPrincipal extends Context.Service<
-  EnvironmentOperationPrincipal,
+export class EnvironmentAuthenticatedPrincipal extends Context.Service<
+  EnvironmentAuthenticatedPrincipal,
   EnvironmentSessionPrincipalShape
->()("@t3tools/contracts/environmentHttp/EnvironmentOperationPrincipal") {}
+>()("@t3tools/contracts/environmentHttp/EnvironmentAuthenticatedPrincipal") {}
+
+export class EnvironmentOrchestrationReadPrincipal extends Context.Service<
+  EnvironmentOrchestrationReadPrincipal,
+  EnvironmentSessionPrincipalShape
+>()("@t3tools/contracts/environmentHttp/EnvironmentOrchestrationReadPrincipal") {}
+
+export class EnvironmentOrchestrationOperationPrincipal extends Context.Service<
+  EnvironmentOrchestrationOperationPrincipal,
+  EnvironmentSessionPrincipalShape
+>()("@t3tools/contracts/environmentHttp/EnvironmentOrchestrationOperationPrincipal") {}
 
 export class EnvironmentAccessManagementPrincipal extends Context.Service<
   EnvironmentAccessManagementPrincipal,
   EnvironmentSessionPrincipalShape
 >()("@t3tools/contracts/environmentHttp/EnvironmentAccessManagementPrincipal") {}
 
-export class EnvironmentOperationAuth extends HttpApiMiddleware.Service<
-  EnvironmentOperationAuth,
-  { provides: EnvironmentOperationPrincipal }
->()("EnvironmentOperationAuth", {
+export class EnvironmentRelayManagementPrincipal extends Context.Service<
+  EnvironmentRelayManagementPrincipal,
+  EnvironmentSessionPrincipalShape
+>()("@t3tools/contracts/environmentHttp/EnvironmentRelayManagementPrincipal") {}
+
+export class EnvironmentAuthenticatedAuth extends HttpApiMiddleware.Service<
+  EnvironmentAuthenticatedAuth,
+  { provides: EnvironmentAuthenticatedPrincipal }
+>()("EnvironmentAuthenticatedAuth", {
+  error: EnvironmentHttpAuthErrors,
+}) {}
+
+export class EnvironmentOrchestrationReadAuth extends HttpApiMiddleware.Service<
+  EnvironmentOrchestrationReadAuth,
+  { provides: EnvironmentOrchestrationReadPrincipal }
+>()("EnvironmentOrchestrationReadAuth", {
+  error: EnvironmentHttpAuthErrors,
+}) {}
+
+export class EnvironmentOrchestrationOperationAuth extends HttpApiMiddleware.Service<
+  EnvironmentOrchestrationOperationAuth,
+  { provides: EnvironmentOrchestrationOperationPrincipal }
+>()("EnvironmentOrchestrationOperationAuth", {
   error: EnvironmentHttpAuthErrors,
 }) {}
 
@@ -127,6 +156,13 @@ export class EnvironmentAccessManagementAuth extends HttpApiMiddleware.Service<
   EnvironmentAccessManagementAuth,
   { provides: EnvironmentAccessManagementPrincipal }
 >()("EnvironmentAccessManagementAuth", {
+  error: EnvironmentHttpAuthErrors,
+}) {}
+
+export class EnvironmentRelayManagementAuth extends HttpApiMiddleware.Service<
+  EnvironmentRelayManagementAuth,
+  { provides: EnvironmentRelayManagementPrincipal }
+>()("EnvironmentRelayManagementAuth", {
   error: EnvironmentHttpAuthErrors,
 }) {}
 
@@ -159,25 +195,25 @@ export class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }),
   )
   .add(
-    HttpApiEndpoint.post("bootstrap", "/api/auth/bootstrap", {
-      payload: AuthBootstrapInput,
-      success: AuthBootstrapResult,
+    HttpApiEndpoint.post("browserSession", "/api/auth/browser-session", {
+      payload: AuthBrowserSessionRequest,
+      success: AuthBrowserSessionResult,
       error: EnvironmentHttpAuthErrors,
     }),
   )
   .add(
-    HttpApiEndpoint.post("token", "/api/auth/token", {
+    HttpApiEndpoint.post("token", "/oauth/token", {
       payload: AuthTokenExchangeRequest,
       success: AuthAccessTokenResult,
       error: EnvironmentHttpAuthErrors,
     }),
   )
   .add(
-    HttpApiEndpoint.post("webSocketToken", "/api/auth/ws-token", {
+    HttpApiEndpoint.post("webSocketTicket", "/api/auth/websocket-ticket", {
       headers: OptionalBearerHeaders,
-      success: AuthWebSocketTokenResult,
+      success: AuthWebSocketTicketResult,
       error: EnvironmentHttpAuthErrors,
-    }).middleware(EnvironmentOperationAuth),
+    }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
     HttpApiEndpoint.post("pairingCredential", "/api/auth/pairing-token", {
@@ -231,7 +267,7 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       headers: OptionalBearerHeaders,
       success: OrchestrationReadModel,
       error: EnvironmentHttpOrchestrationErrors,
-    }).middleware(EnvironmentOperationAuth),
+    }).middleware(EnvironmentOrchestrationReadAuth),
   )
   .add(
     HttpApiEndpoint.post("dispatch", "/api/orchestration/dispatch", {
@@ -239,7 +275,7 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       payload: ClientOrchestrationCommand,
       success: DispatchResult,
       error: EnvironmentHttpOrchestrationErrors,
-    }).middleware(EnvironmentOperationAuth),
+    }).middleware(EnvironmentOrchestrationOperationAuth),
   ) {}
 
 export class EnvironmentHttpApi extends HttpApi.make("environment")

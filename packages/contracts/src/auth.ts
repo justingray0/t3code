@@ -70,20 +70,34 @@ export const ServerAuthSessionMethod = Schema.Literals([
 ]);
 export type ServerAuthSessionMethod = typeof ServerAuthSessionMethod.Type;
 
-export const AuthEnvironmentOperateScope = "environment:operate" as const;
+export const AuthOrchestrationReadScope = "orchestration:read" as const;
+export const AuthOrchestrationOperateScope = "orchestration:operate" as const;
+export const AuthTerminalOperateScope = "terminal:operate" as const;
+export const AuthReviewWriteScope = "review:write" as const;
 export const AuthAccessManageScope = "access:manage" as const;
+export const AuthRelayManageScope = "relay:manage" as const;
 export const AuthEnvironmentScope = Schema.Literals([
-  AuthEnvironmentOperateScope,
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  AuthReviewWriteScope,
   AuthAccessManageScope,
+  AuthRelayManageScope,
 ]);
 export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
 export type AuthEnvironmentScopes = typeof AuthEnvironmentScopes.Type;
 
-export const AuthStandardClientScopes = [AuthEnvironmentOperateScope] as const;
+export const AuthStandardClientScopes = [
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  AuthReviewWriteScope,
+] as const;
 export const AuthAdministrativeScopes = [
-  AuthEnvironmentOperateScope,
+  ...AuthStandardClientScopes,
   AuthAccessManageScope,
+  AuthRelayManageScope,
 ] as const;
 
 export const AuthTokenExchangeGrantType =
@@ -120,18 +134,18 @@ export const ServerAuthDescriptor = Schema.Struct({
 });
 export type ServerAuthDescriptor = typeof ServerAuthDescriptor.Type;
 
-export const AuthBootstrapInput = Schema.Struct({
+export const AuthBrowserSessionRequest = Schema.Struct({
   credential: TrimmedNonEmptyString,
 });
-export type AuthBootstrapInput = typeof AuthBootstrapInput.Type;
+export type AuthBrowserSessionRequest = typeof AuthBrowserSessionRequest.Type;
 
-export const AuthBootstrapResult = Schema.Struct({
+export const AuthBrowserSessionResult = Schema.Struct({
   authenticated: Schema.Literal(true),
   scopes: AuthEnvironmentScopes,
   sessionMethod: ServerAuthSessionMethod,
   expiresAt: Schema.DateTimeUtc,
 });
-export type AuthBootstrapResult = typeof AuthBootstrapResult.Type;
+export type AuthBrowserSessionResult = typeof AuthBrowserSessionResult.Type;
 
 export const AuthTokenExchangeRequest = Schema.Struct({
   grant_type: Schema.Literal(AuthTokenExchangeGrantType),
@@ -151,11 +165,11 @@ export const AuthAccessTokenResult = Schema.Struct({
 });
 export type AuthAccessTokenResult = typeof AuthAccessTokenResult.Type;
 
-export const AuthWebSocketTokenResult = Schema.Struct({
-  token: TrimmedNonEmptyString,
+export const AuthWebSocketTicketResult = Schema.Struct({
+  ticket: TrimmedNonEmptyString,
   expiresAt: Schema.DateTimeUtc,
 });
-export type AuthWebSocketTokenResult = typeof AuthWebSocketTokenResult.Type;
+export type AuthWebSocketTicketResult = typeof AuthWebSocketTicketResult.Type;
 
 export const AuthPairingCredentialResult = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -247,6 +261,14 @@ export class AuthAccessStreamError extends Schema.TaggedErrorClass<AuthAccessStr
   "AuthAccessStreamError",
   {
     message: Schema.String,
+  },
+) {}
+
+export class EnvironmentAuthorizationError extends Schema.TaggedErrorClass<EnvironmentAuthorizationError>()(
+  "EnvironmentAuthorizationError",
+  {
+    message: Schema.String,
+    requiredScope: AuthEnvironmentScope,
   },
 ) {}
 

@@ -67,7 +67,10 @@ import { ServerEnvironmentLive } from "./environment/Layers/ServerEnvironment.ts
 import {
   authHttpApiLayer,
   environmentAccessManagementAuthLayer,
-  environmentOperationAuthLayer,
+  environmentAuthenticatedAuthLayer,
+  environmentOrchestrationOperationAuthLayer,
+  environmentOrchestrationReadAuthLayer,
+  environmentRelayManagementAuthLayer,
 } from "./auth/http.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
@@ -297,8 +300,11 @@ export const makeRoutesLayer = Layer.mergeAll(
     Layer.provide(authHttpApiLayer),
     Layer.provide(orchestrationHttpApiLayer),
     Layer.provide(serverEnvironmentHttpApiLayer),
-    Layer.provide(environmentOperationAuthLayer),
+    Layer.provide(environmentAuthenticatedAuthLayer),
+    Layer.provide(environmentOrchestrationReadAuthLayer),
+    Layer.provide(environmentOrchestrationOperationAuthLayer),
     Layer.provide(environmentAccessManagementAuthLayer),
+    Layer.provide(environmentRelayManagementAuthLayer),
   ),
   attachmentsRouteLayer,
   otlpTracesProxyRouteLayer,

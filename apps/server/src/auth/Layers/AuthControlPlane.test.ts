@@ -46,7 +46,7 @@ it.layer(NodeServices.layer)("AuthControlPlane", (it) => {
       const authControlPlane = yield* AuthControlPlane;
 
       const created = yield* authControlPlane.createPairingLink({
-        scopes: ["environment:operate"],
+        scopes: ["orchestration:read"],
         subject: "one-time-token",
         label: "CI phone",
       });
@@ -54,7 +54,7 @@ it.layer(NodeServices.layer)("AuthControlPlane", (it) => {
       const revoked = yield* authControlPlane.revokePairingLink(created.id);
       const listedAfterRevoke = yield* authControlPlane.listPairingLinks();
 
-      expect(created.scopes).toEqual(["environment:operate"]);
+      expect(created.scopes).toEqual(["orchestration:read"]);
       expect(created.credential.length).toBeGreaterThan(0);
       expect(listedBeforeRevoke).toHaveLength(1);
       expect(listedBeforeRevoke[0]?.id).toBe(created.id);
@@ -79,11 +79,25 @@ it.layer(NodeServices.layer)("AuthControlPlane", (it) => {
       const listedAfterRevoke = yield* authControlPlane.listSessions();
 
       expect(issued.method).toBe("bearer-access-token");
-      expect(issued.scopes).toEqual(["environment:operate", "access:manage"]);
+      expect(issued.scopes).toEqual([
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "access:manage",
+        "relay:manage",
+      ]);
       expect(issued.client.deviceType).toBe("bot");
       expect(issued.client.label).toBe("deploy-bot");
       expect(verified.sessionId).toBe(issued.sessionId);
-      expect(verified.scopes).toEqual(["environment:operate", "access:manage"]);
+      expect(verified.scopes).toEqual([
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "access:manage",
+        "relay:manage",
+      ]);
       expect(verified.method).toBe("bearer-access-token");
       expect(listedBeforeRevoke).toHaveLength(1);
       expect(listedBeforeRevoke[0]?.sessionId).toBe(issued.sessionId);

@@ -41,7 +41,7 @@ it.layer(NodeServices.layer)("SessionCredentialServiceLive", (it) => {
       const sessions = yield* SessionCredentialService;
       const issued = yield* sessions.issue({
         subject: "desktop-bootstrap",
-        scopes: ["environment:operate", "access:manage"],
+        scopes: ["orchestration:read", "access:manage"],
         client: {
           label: "Desktop app",
           deviceType: "desktop",
@@ -54,7 +54,7 @@ it.layer(NodeServices.layer)("SessionCredentialServiceLive", (it) => {
 
       expect(verified.method).toBe("browser-session-cookie");
       expect(verified.subject).toBe("desktop-bootstrap");
-      expect(verified.scopes).toEqual(["environment:operate", "access:manage"]);
+      expect(verified.scopes).toEqual(["orchestration:read", "access:manage"]);
       expect(verified.client.label).toBe("Desktop app");
       expect(verified.client.browser).toBe("Electron");
       expect(verified.expiresAt?.toString()).toBe(issued.expiresAt.toString());
@@ -80,7 +80,12 @@ it.layer(NodeServices.layer)("SessionCredentialServiceLive", (it) => {
 
       expect(verified.method).toBe("bearer-access-token");
       expect(verified.subject).toBe("test-clock");
-      expect(verified.scopes).toEqual(["environment:operate"]);
+      expect(verified.scopes).toEqual([
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+      ]);
     }).pipe(Effect.provide(Layer.merge(makeSessionCredentialLayer(), TestClock.layer()))),
   );
 
@@ -106,7 +111,7 @@ it.layer(NodeServices.layer)("SessionCredentialServiceLive", (it) => {
       const sessions = yield* SessionCredentialService;
       const administrative = yield* sessions.issue({
         subject: "desktop-bootstrap",
-        scopes: ["environment:operate", "access:manage"],
+        scopes: ["orchestration:read", "access:manage"],
         client: {
           label: "Desktop app",
           deviceType: "desktop",
@@ -116,7 +121,7 @@ it.layer(NodeServices.layer)("SessionCredentialServiceLive", (it) => {
       });
       const client = yield* sessions.issue({
         subject: "one-time-token",
-        scopes: ["environment:operate"],
+        scopes: ["orchestration:read"],
         client: {
           label: "Julius iPhone",
           deviceType: "mobile",

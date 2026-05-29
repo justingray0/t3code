@@ -11,7 +11,7 @@ import {
   ExecutionEnvironmentDescriptor,
   AuthAccessTokenResult,
   AuthSessionState,
-  AuthWebSocketTokenResult,
+  AuthWebSocketTicketResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -100,16 +100,16 @@ export const fetchSshSessionState = makeIpcMethod({
   }),
 });
 
-export const issueSshWebSocketToken = makeIpcMethod({
+export const issueSshWebSocketTicket = makeIpcMethod({
   channel: IpcChannels.ISSUE_SSH_WEBSOCKET_TOKEN_CHANNEL,
   payload: DesktopSshBearerRequestInputSchema,
-  result: AuthWebSocketTokenResult,
-  handler: Effect.fn("desktop.ipc.sshEnvironment.issueWebSocketToken")(function* ({
+  result: AuthWebSocketTicketResult,
+  handler: Effect.fn("desktop.ipc.sshEnvironment.issueWebSocketTicket")(function* ({
     httpBaseUrl,
     bearerToken,
   }) {
     const remoteApi = yield* DesktopSshRemoteApi.DesktopSshRemoteApi;
-    return yield* remoteApi.issueWebSocketToken({ httpBaseUrl, bearerToken });
+    return yield* remoteApi.issueWebSocketTicket({ httpBaseUrl, bearerToken });
   }),
 });
 

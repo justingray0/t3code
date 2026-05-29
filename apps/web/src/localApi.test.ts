@@ -202,8 +202,8 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     fetchSshSessionState: async () => {
       throw new Error("fetchSshSessionState not implemented in test");
     },
-    issueSshWebSocketToken: async () => {
-      throw new Error("issueSshWebSocketToken not implemented in test");
+    issueSshWebSocketTicket: async () => {
+      throw new Error("issueSshWebSocketTicket not implemented in test");
     },
     onSshPasswordPrompt: () => () => undefined,
     resolveSshPasswordPrompt: async () => undefined,

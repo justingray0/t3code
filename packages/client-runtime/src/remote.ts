@@ -1,11 +1,12 @@
 import {
   AuthAccessTokenType,
   AuthEnvironmentBootstrapTokenType,
-  AuthEnvironmentOperateScope,
+  AuthStandardClientScopes,
   AuthTokenExchangeGrantType,
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
 } from "@t3tools/contracts";
+import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import type {
   EnvironmentHttpBadRequestError,
   EnvironmentHttpForbiddenError,
@@ -175,7 +176,7 @@ export const bootstrapRemoteBearerSession = Effect.fn(
 }) {
   const client = yield* makeEnvironmentHttpApiClient(input.httpBaseUrl);
   return yield* executeRemoteRequest(
-    remoteEndpointUrl(input.httpBaseUrl, "/api/auth/token"),
+    remoteEndpointUrl(input.httpBaseUrl, "/oauth/token"),
     input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
     client.auth.token({
       payload: {
@@ -183,7 +184,7 @@ export const bootstrapRemoteBearerSession = Effect.fn(
         subject_token: input.credential,
         subject_token_type: AuthEnvironmentBootstrapTokenType,
         requested_token_type: AuthAccessTokenType,
-        scope: AuthEnvironmentOperateScope,
+        scope: encodeOAuthScope(AuthStandardClientScopes),
       },
     }),
   );
@@ -219,8 +220,8 @@ export const fetchRemoteEnvironmentDescriptor = Effect.fn(
   );
 });
 
-export const issueRemoteWebSocketToken = Effect.fn(
-  "clientRuntime.remote.issueRemoteWebSocketToken",
+export const issueRemoteWebSocketTicket = Effect.fn(
+  "clientRuntime.remote.issueRemoteWebSocketTicket",
 )(function* (input: {
   readonly httpBaseUrl: string;
   readonly bearerToken: string;
@@ -228,9 +229,9 @@ export const issueRemoteWebSocketToken = Effect.fn(
 }) {
   const client = yield* makeEnvironmentHttpApiClient(input.httpBaseUrl);
   return yield* executeRemoteRequest(
-    remoteEndpointUrl(input.httpBaseUrl, "/api/auth/ws-token"),
+    remoteEndpointUrl(input.httpBaseUrl, "/api/auth/websocket-ticket"),
     input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
-    client.auth.webSocketToken({
+    client.auth.webSocketTicket({
       headers: {
         authorization: `Bearer ${input.bearerToken}`,
       },
@@ -246,7 +247,7 @@ export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
   readonly bearerToken: string;
   readonly timeoutMs?: number;
 }) {
-  const issued = yield* issueRemoteWebSocketToken({
+  const issued = yield* issueRemoteWebSocketTicket({
     httpBaseUrl: input.httpBaseUrl,
     bearerToken: input.bearerToken,
     ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
@@ -256,6 +257,6 @@ export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
   if (url.pathname === "" || url.pathname === "/") {
     url.pathname = "/ws";
   }
-  url.searchParams.set("wsToken", issued.token);
+  url.searchParams.set("wsTicket", issued.ticket);
   return url.toString();
 });

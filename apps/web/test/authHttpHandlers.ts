@@ -30,7 +30,7 @@ export function createAuthenticatedSessionHandlers(getAuthDescriptor: () => Serv
         expiresAt: TEST_SESSION_EXPIRES_AT,
       }),
     ),
-    http.post("*/api/auth/bootstrap", () =>
+    http.post("*/api/auth/browser-session", () =>
       HttpResponse.json({
         authenticated: true,
         sessionMethod: "browser-session-cookie",

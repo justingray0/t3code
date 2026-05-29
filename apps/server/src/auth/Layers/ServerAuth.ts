@@ -5,10 +5,10 @@ import {
   AuthStandardClientScopes,
   type AuthAccessTokenResult,
   type AuthClientSession,
-  type AuthBootstrapResult,
+  type AuthBrowserSessionResult,
   type AuthPairingCredentialResult,
   type AuthSessionState,
-  type AuthWebSocketTokenResult,
+  type AuthWebSocketTicketResult,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as DateTime from "effect/DateTime";
@@ -35,12 +35,12 @@ import {
 import { AuthControlPlaneLive, AuthCoreLive } from "./AuthControlPlane.ts";
 
 type BootstrapExchangeResult = {
-  readonly response: AuthBootstrapResult;
+  readonly response: AuthBrowserSessionResult;
   readonly sessionToken: string;
 };
 
 const AUTHORIZATION_PREFIX = "Bearer ";
-const WEBSOCKET_TOKEN_QUERY_PARAM = "wsToken";
+const WEBSOCKET_TICKET_QUERY_PARAM = "wsTicket";
 
 export function toBootstrapExchangeAuthError(cause: BootstrapCredentialError): AuthError {
   if (cause.status === 500) {
@@ -135,7 +135,7 @@ export const makeServerAuth = Effect.gen(function* () {
       ),
     );
 
-  const exchangeBootstrapCredential: ServerAuthShape["exchangeBootstrapCredential"] = (
+  const createBrowserSession: ServerAuthShape["createBrowserSession"] = (
     credential,
     requestMetadata,
   ) =>
@@ -170,7 +170,7 @@ export const makeServerAuth = Effect.gen(function* () {
               scopes: session.scopes,
               sessionMethod: session.method,
               expiresAt: DateTime.toUtc(session.expiresAt),
-            } satisfies AuthBootstrapResult,
+            } satisfies AuthBrowserSessionResult,
             sessionToken: session.token,
           }) satisfies BootstrapExchangeResult,
       ),
@@ -344,7 +344,7 @@ export const makeServerAuth = Effect.gen(function* () {
       }),
     );
 
-  const issueWebSocketToken: ServerAuthShape["issueWebSocketToken"] = (session) =>
+  const issueWebSocketTicket: ServerAuthShape["issueWebSocketTicket"] = (session) =>
     sessions.issueWebSocketToken(session.sessionId).pipe(
       Effect.mapError(
         (cause) =>
@@ -356,9 +356,9 @@ export const makeServerAuth = Effect.gen(function* () {
       Effect.map(
         (issued) =>
           ({
-            token: issued.token,
+            ticket: issued.token,
             expiresAt: DateTime.toUtc(issued.expiresAt),
-          }) satisfies AuthWebSocketTokenResult,
+          }) satisfies AuthWebSocketTicketResult,
       ),
     );
 
@@ -366,9 +366,9 @@ export const makeServerAuth = Effect.gen(function* () {
     Effect.gen(function* () {
       const requestUrl = HttpServerRequest.toURL(request);
       if (Option.isSome(requestUrl)) {
-        const websocketToken = requestUrl.value.searchParams.get(WEBSOCKET_TOKEN_QUERY_PARAM);
-        if (websocketToken && websocketToken.trim().length > 0) {
-          return yield* sessions.verifyWebSocketToken(websocketToken).pipe(
+        const websocketTicket = requestUrl.value.searchParams.get(WEBSOCKET_TICKET_QUERY_PARAM);
+        if (websocketTicket && websocketTicket.trim().length > 0) {
+          return yield* sessions.verifyWebSocketToken(websocketTicket).pipe(
             Effect.map((session) => ({
               sessionId: session.sessionId,
               subject: session.subject,
@@ -394,7 +394,7 @@ export const makeServerAuth = Effect.gen(function* () {
   return {
     getDescriptor: () => Effect.succeed(descriptor),
     getSessionState,
-    exchangeBootstrapCredential,
+    createBrowserSession,
     exchangeBootstrapCredentialForAccessToken,
     issuePairingCredential,
     listPairingLinks,
@@ -404,7 +404,7 @@ export const makeServerAuth = Effect.gen(function* () {
     revokeOtherClientSessions,
     authenticateHttpRequest: authenticateRequest,
     authenticateWebSocketUpgrade,
-    issueWebSocketToken,
+    issueWebSocketTicket,
     issueStartupPairingUrl,
   } satisfies ServerAuthShape;
 });

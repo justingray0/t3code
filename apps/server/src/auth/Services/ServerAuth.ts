@@ -1,6 +1,6 @@
 import type {
   AuthAccessTokenResult,
-  AuthBootstrapResult,
+  AuthBrowserSessionResult,
   AuthClientMetadata,
   AuthClientSession,
   AuthCreatePairingCredentialInput,
@@ -11,7 +11,7 @@ import type {
   AuthSessionState,
   ServerAuthDescriptor,
   ServerAuthSessionMethod,
-  AuthWebSocketTokenResult,
+  AuthWebSocketTicketResult,
 } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
@@ -38,12 +38,12 @@ export interface ServerAuthShape {
   readonly getSessionState: (
     request: HttpServerRequest.HttpServerRequest,
   ) => Effect.Effect<AuthSessionState, never>;
-  readonly exchangeBootstrapCredential: (
+  readonly createBrowserSession: (
     credential: string,
     requestMetadata: AuthClientMetadata,
   ) => Effect.Effect<
     {
-      readonly response: AuthBootstrapResult;
+      readonly response: AuthBrowserSessionResult;
       readonly sessionToken: string;
     },
     AuthError
@@ -76,9 +76,9 @@ export interface ServerAuthShape {
   readonly authenticateWebSocketUpgrade: (
     request: HttpServerRequest.HttpServerRequest,
   ) => Effect.Effect<AuthenticatedSession, AuthError>;
-  readonly issueWebSocketToken: (
+  readonly issueWebSocketTicket: (
     session: AuthenticatedSession,
-  ) => Effect.Effect<AuthWebSocketTokenResult, AuthError>;
+  ) => Effect.Effect<AuthWebSocketTicketResult, AuthError>;
   readonly issueStartupPairingUrl: (baseUrl: string) => Effect.Effect<string, AuthError>;
 }
 

@@ -1,6 +1,7 @@
 import {
   AuthSessionId,
   AuthStandardClientScopes,
+  AuthEnvironmentScopes,
   type AuthClientMetadata,
   type AuthClientSession,
 } from "@t3tools/contracts";
@@ -45,7 +46,7 @@ const SessionClaims = Schema.Struct({
   kind: Schema.Literal("session"),
   sid: AuthSessionId,
   sub: Schema.String,
-  scopes: Schema.Array(Schema.Literals(["environment:operate", "access:manage"])),
+  scopes: AuthEnvironmentScopes,
   method: Schema.Literals(["browser-session-cookie", "bearer-access-token"]),
   iat: Schema.Number,
   exp: Schema.Number,

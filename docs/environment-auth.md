@@ -9,27 +9,32 @@ checks and token exchange behavior can be audited against established concepts.
 Environment authorization is capability-based. A session carries zero or more
 OAuth-style scope strings:
 
-| Scope                 | Permission                                                              |
-| --------------------- | ----------------------------------------------------------------------- |
-| `environment:operate` | Use ordinary environment APIs and request a WebSocket connection token. |
-| `access:manage`       | Create or revoke pairing links and inspect or revoke client sessions.   |
+| Scope                   | Permission                                                               |
+| ----------------------- | ------------------------------------------------------------------------ |
+| `orchestration:read`    | Read snapshots, status, events, configuration, and filesystem/VCS state. |
+| `orchestration:operate` | Dispatch user operations and mutate environment-side workspace state.    |
+| `terminal:operate`      | Create, attach, input, resize, clear, restart, and terminate terminals.  |
+| `review:write`          | Read review diff previews used to compose review feedback.               |
+| `access:manage`         | Create or revoke pairing links and inspect or revoke client sessions.    |
+| `relay:manage`          | Link, configure, or unlink managed relay connectivity.                   |
 
-Ordinary pairing links grant only `environment:operate`. The desktop bootstrap
-credential and command-line administrative bootstrap credentials grant both
-scopes.
+Ordinary pairing links grant the four client-operation scopes:
+`orchestration:read orchestration:operate terminal:operate review:write`.
+The desktop bootstrap credential and command-line administrative bootstrap
+credentials additionally grant `access:manage relay:manage`.
 
 ## Authentication Flows
 
 ### Browser Session
 
-`POST /api/auth/bootstrap` consumes a one-time bootstrap credential and creates a
+`POST /api/auth/browser-session` consumes a one-time bootstrap credential and creates a
 browser session cookie. The cookie is an HTTP transport adapter for the same
 scoped session model; the response never exposes the session secret to browser
 JavaScript.
 
 ### Bearer Access Token
 
-Non-browser clients use `POST /api/auth/token` with an
+Non-browser clients use `POST /oauth/token` with an
 `application/x-www-form-urlencoded` body:
 
 ```text
@@ -37,7 +42,7 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 subject_token=<bootstrap credential>
 subject_token_type=urn:t3:params:oauth:token-type:environment-bootstrap
 requested_token_type=urn:ietf:params:oauth:token-type:access_token
-scope=environment:operate
+scope=orchestration:read orchestration:operate terminal:operate review:write
 ```
 
 The response has the token-exchange shape:
@@ -48,20 +53,25 @@ The response has the token-exchange shape:
   "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
   "token_type": "Bearer",
   "expires_in": 3600,
-  "scope": "environment:operate"
+  "scope": "orchestration:read orchestration:operate terminal:operate review:write"
 }
 ```
 
 Requested scopes must be a subset of the one-time bootstrap credential grant.
 An ordinary paired client therefore cannot exchange its grant for
-`access:manage`.
+`access:manage` or `relay:manage`.
 
-### WebSocket Connection Token
+### WebSocket Ticket
 
-`POST /api/auth/ws-token` accepts an authenticated session with
-`environment:operate` and returns a short-lived, single-purpose WebSocket
-connection token. This keeps bearer tokens and browser cookies out of WebSocket
-URLs while allowing the socket handshake to authenticate.
+`POST /api/auth/websocket-ticket` accepts any authenticated session and returns
+a short-lived, single-purpose WebSocket ticket. This keeps bearer tokens and
+browser cookies out of WebSocket URLs while allowing the socket handshake to
+authenticate. The ticket carries its session's scopes; each RPC method then
+enforces `orchestration:read`, `orchestration:operate`, `terminal:operate`,
+`review:write`, or `access:manage` as appropriate. Review feedback submission
+currently dispatches an orchestration operation, so clients performing it also
+need `orchestration:operate`. Creating a ticket is not
+authorization to call every RPC method.
 
 ## Standards Alignment
 

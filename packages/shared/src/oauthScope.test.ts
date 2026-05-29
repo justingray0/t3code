@@ -4,31 +4,31 @@ import { encodeOAuthScope, parseAllowedOAuthScope, parseOAuthScope } from "./oau
 
 describe("OAuth scopes", () => {
   it("parses an RFC 6749 space-delimited scope set without duplicating permissions", () => {
-    expect(parseOAuthScope("environment:operate access:manage environment:operate")).toEqual([
-      "environment:operate",
+    expect(parseOAuthScope("orchestration:read access:manage orchestration:read")).toEqual([
+      "orchestration:read",
       "access:manage",
     ]);
   });
 
   it("rejects whitespace that is not the SP delimiter or introduces empty tokens", () => {
-    expect(parseOAuthScope("environment:operate\taccess:manage")).toBeNull();
-    expect(parseOAuthScope("environment:operate  access:manage")).toBeNull();
+    expect(parseOAuthScope("orchestration:read\taccess:manage")).toBeNull();
+    expect(parseOAuthScope("orchestration:read  access:manage")).toBeNull();
   });
 
   it("encodes and restricts requested scopes to the allowed capability set", () => {
-    expect(encodeOAuthScope(["environment:operate", "access:manage"])).toBe(
-      "environment:operate access:manage",
+    expect(encodeOAuthScope(["orchestration:read", "access:manage"])).toBe(
+      "orchestration:read access:manage",
     );
     expect(
       parseAllowedOAuthScope({
-        value: "environment:operate access:manage",
-        allowedScopes: new Set(["environment:operate", "access:manage"] as const),
+        value: "orchestration:read access:manage",
+        allowedScopes: new Set(["orchestration:read", "access:manage"] as const),
       }),
-    ).toEqual(["environment:operate", "access:manage"]);
+    ).toEqual(["orchestration:read", "access:manage"]);
     expect(
       parseAllowedOAuthScope({
-        value: "environment:operate relay:manage",
-        allowedScopes: new Set(["environment:operate", "access:manage"] as const),
+        value: "orchestration:read relay:manage",
+        allowedScopes: new Set(["orchestration:read", "access:manage"] as const),
       }),
     ).toBeNull();
   });

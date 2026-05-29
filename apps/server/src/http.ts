@@ -1,5 +1,9 @@
 import Mime from "@effect/platform-node/Mime";
-import { AuthEnvironmentOperateScope, EnvironmentHttpApi } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  EnvironmentHttpApi,
+} from "@t3tools/contracts";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -72,17 +76,20 @@ export function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
   return redirectUrl.toString();
 }
 
-const requireEnvironmentOperationRequest = Effect.gen(function* () {
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const serverAuth = yield* ServerAuth;
-  const session = yield* serverAuth.authenticateHttpRequest(request);
-  if (!session.scopes.includes(AuthEnvironmentOperateScope)) {
-    return yield* new AuthError({
-      message: "The authenticated token is missing required scope: environment:operate.",
-      status: 403,
-    });
-  }
-});
+const requireEnvironmentScope = (
+  scope: typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope,
+) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const serverAuth = yield* ServerAuth;
+    const session = yield* serverAuth.authenticateHttpRequest(request);
+    if (!session.scopes.includes(scope)) {
+      return yield* new AuthError({
+        message: `The authenticated token is missing required scope: ${scope}.`,
+        status: 403,
+      });
+    }
+  });
 
 export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -105,7 +112,7 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
   "POST",
   OTLP_TRACES_PROXY_PATH,
   Effect.gen(function* () {
-    yield* requireEnvironmentOperationRequest;
+    yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
     const request = yield* HttpServerRequest.HttpServerRequest;
     const config = yield* ServerConfig;
     const otlpTracesUrl = config.otlpTracesUrl;
@@ -154,7 +161,7 @@ export const attachmentsRouteLayer = HttpRouter.add(
   "GET",
   `${ATTACHMENTS_ROUTE_PREFIX}/*`,
   Effect.gen(function* () {
-    yield* requireEnvironmentOperationRequest;
+    yield* requireEnvironmentScope(AuthOrchestrationReadScope);
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
     if (Option.isNone(url)) {
@@ -210,7 +217,7 @@ export const projectFaviconRouteLayer = HttpRouter.add(
   "GET",
   "/api/project-favicon",
   Effect.gen(function* () {
-    yield* requireEnvironmentOperationRequest;
+    yield* requireEnvironmentScope(AuthOrchestrationReadScope);
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
     if (Option.isNone(url)) {

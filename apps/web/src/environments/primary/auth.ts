@@ -1,6 +1,7 @@
 import type {
-  AuthBootstrapResult,
+  AuthBrowserSessionResult,
   AuthClientMetadata,
+  AuthEnvironmentScope,
   AuthPairingCredentialResult,
   AuthSessionId,
   AuthSessionState,
@@ -34,7 +35,7 @@ const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 export interface ServerPairingLinkRecord {
   readonly id: string;
   readonly credential: string;
-  readonly scopes: ReadonlyArray<"environment:operate" | "access:manage">;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly subject: string;
   readonly label?: string;
   readonly createdAt: string;
@@ -44,7 +45,7 @@ export interface ServerPairingLinkRecord {
 export interface ServerClientSessionRecord {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
-  readonly scopes: ReadonlyArray<"environment:operate" | "access:manage">;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly method: "browser-session-cookie" | "bearer-access-token";
   readonly client: AuthClientMetadata;
   readonly issuedAt: string;
@@ -157,12 +158,12 @@ function toFriendlyBootstrapErrorMessage(status: number, message: string): strin
   return trimmedMessage;
 }
 
-async function exchangeBootstrapCredential(credential: string): Promise<AuthBootstrapResult> {
+async function exchangeBootstrapCredential(credential: string): Promise<AuthBrowserSessionResult> {
   return retryTransientBootstrap(async () => {
     try {
       return await primaryHttpRuntime.runPromise(
         makeEnvironmentHttpApiClient(resolvePrimaryEnvironmentHttpUrl("/")).pipe(
-          Effect.flatMap((client) => client.auth.bootstrap({ payload: { credential } })),
+          Effect.flatMap((client) => client.auth.browserSession({ payload: { credential } })),
         ),
       );
     } catch (error) {

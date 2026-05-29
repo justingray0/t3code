@@ -1,6 +1,6 @@
 import {
   type AuthEnvironmentScope,
-  AuthEnvironmentOperateScope,
+  AuthStandardClientScopes,
   type DesktopSshEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
   type EnvironmentId,
@@ -750,9 +750,9 @@ async function resolveDesktopSshWebSocketConnectionUrl(
   httpBaseUrl: string,
   bearerToken: string,
 ) {
-  const issued = await getDesktopSshBridge().issueSshWebSocketToken(httpBaseUrl, bearerToken);
+  const issued = await getDesktopSshBridge().issueSshWebSocketTicket(httpBaseUrl, bearerToken);
   const url = new URL(wsBaseUrl, window.location.origin);
-  url.searchParams.set("wsToken", issued.token);
+  url.searchParams.set("wsTicket", issued.ticket);
   return url.toString();
 }
 
@@ -840,7 +840,7 @@ async function issueDesktopSshBearerSession(record: SavedEnvironmentRecord): Pro
   return {
     record: prepared.record,
     bearerToken: bearerSession.access_token,
-    scopes: [AuthEnvironmentOperateScope],
+    scopes: [...AuthStandardClientScopes],
   };
 }
 
@@ -1341,7 +1341,7 @@ async function ensureSavedEnvironmentConnection(
           const issued = await issueDesktopSshBearerSession(record);
           activeRecord = issued.record;
           bearerToken = issued.bearerToken;
-          scopeHint = [AuthEnvironmentOperateScope];
+          scopeHint = [...AuthStandardClientScopes];
         } else {
           useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
             authState: "requires-auth",
@@ -1432,7 +1432,7 @@ async function ensureSavedEnvironmentConnection(
           const issued = await issueDesktopSshBearerSession(activeRecord);
           activeRecord = issued.record;
           bearerToken = issued.bearerToken;
-          scopeHint = [AuthEnvironmentOperateScope];
+          scopeHint = [...AuthStandardClientScopes];
           await connection.dispose().catch(() => undefined);
           pendingSavedEnvironmentConnections.delete(activeRecord.environmentId);
           return await ensureSavedEnvironmentConnection(activeRecord, {
@@ -1641,7 +1641,7 @@ export async function reconnectSavedEnvironment(environmentId: EnvironmentId): P
         await removeConnection(environmentId).catch(() => false);
         await ensureSavedEnvironmentConnection(issued.record, {
           bearerToken: issued.bearerToken,
-          scopes: [AuthEnvironmentOperateScope],
+          scopes: [...AuthStandardClientScopes],
         });
         return;
       } catch (recoveryError) {
@@ -1730,7 +1730,7 @@ export async function addSavedEnvironment(input: {
   await removeConnection(environmentId).catch(() => false);
   await ensureSavedEnvironmentConnection(record, {
     bearerToken: bearerSession.access_token,
-    scopes: [AuthEnvironmentOperateScope],
+    scopes: [...AuthStandardClientScopes],
   });
   return record;
 }

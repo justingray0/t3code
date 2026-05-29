@@ -113,7 +113,7 @@ describe("resolveInitialServerAuthGateState", () => {
       .mockResolvedValueOnce(
         jsonResponse({
           authenticated: true,
-          scopes: ["environment:operate", "access:manage"],
+          scopes: ["orchestration:read", "access:manage"],
           sessionMethod: "browser-session-cookie",
           expiresAt: "2026-04-05T00:00:00.000Z",
         }),
@@ -153,7 +153,7 @@ describe("resolveInitialServerAuthGateState", () => {
       credentials: "include",
     });
     expectFetchRequest(fetchMock, 1, {
-      url: "http://localhost:3773/api/auth/bootstrap",
+      url: "http://localhost:3773/api/auth/browser-session",
       credentials: "include",
       method: "POST",
       body: JSON.stringify({ credential: "desktop-bootstrap-token" }),
@@ -371,7 +371,7 @@ describe("resolveInitialServerAuthGateState", () => {
       .mockResolvedValueOnce(
         jsonResponse({
           authenticated: true,
-          scopes: ["environment:operate"],
+          scopes: ["orchestration:read"],
           sessionMethod: "browser-session-cookie",
           expiresAt: "2026-04-05T00:00:00.000Z",
         }),
@@ -431,7 +431,7 @@ describe("resolveInitialServerAuthGateState", () => {
       "Invalid pairing token. Check the token and try again.",
     );
     expectFetchRequest(fetchMock, 0, {
-      url: "http://localhost/api/auth/bootstrap",
+      url: "http://localhost/api/auth/browser-session",
       credentials: "include",
       body: JSON.stringify({ credential: "bad-token" }),
       headers: {
@@ -459,7 +459,7 @@ describe("resolveInitialServerAuthGateState", () => {
       .mockResolvedValueOnce(
         jsonResponse({
           authenticated: true,
-          scopes: ["environment:operate", "access:manage"],
+          scopes: ["orchestration:read", "access:manage"],
           sessionMethod: "browser-session-cookie",
           expiresAt: "2026-04-05T00:00:00.000Z",
         }),
