@@ -286,6 +286,7 @@ export class RelayAuthInvalidError extends Schema.TaggedErrorClass<RelayAuthInva
     reason: RelayAuthInvalidReason,
     traceId: TrimmedNonEmptyString,
   },
+  { httpApiStatus: 401 },
 ) {}
 
 export class RelayEnvironmentLinkProofExpiredError extends Schema.TaggedErrorClass<RelayEnvironmentLinkProofExpiredError>()(
@@ -294,6 +295,7 @@ export class RelayEnvironmentLinkProofExpiredError extends Schema.TaggedErrorCla
     code: Schema.Literal("environment_link_proof_expired"),
     traceId: TrimmedNonEmptyString,
   },
+  { httpApiStatus: 401 },
 ) {}
 
 export class RelayEnvironmentLinkProofInvalidError extends Schema.TaggedErrorClass<RelayEnvironmentLinkProofInvalidError>()(
@@ -303,6 +305,7 @@ export class RelayEnvironmentLinkProofInvalidError extends Schema.TaggedErrorCla
     reason: RelayEnvironmentLinkProofInvalidReason,
     traceId: TrimmedNonEmptyString,
   },
+  { httpApiStatus: 400 },
 ) {}
 
 export class RelayEnvironmentConnectNotAuthorizedError extends Schema.TaggedErrorClass<RelayEnvironmentConnectNotAuthorizedError>()(
@@ -311,6 +314,7 @@ export class RelayEnvironmentConnectNotAuthorizedError extends Schema.TaggedErro
     code: Schema.Literal("environment_connect_not_authorized"),
     traceId: TrimmedNonEmptyString,
   },
+  { httpApiStatus: 403 },
 ) {}
 
 export class RelayEnvironmentEndpointUnavailableError extends Schema.TaggedErrorClass<RelayEnvironmentEndpointUnavailableError>()(
@@ -320,6 +324,7 @@ export class RelayEnvironmentEndpointUnavailableError extends Schema.TaggedError
     reason: RelayEnvironmentEndpointUnavailableReason,
     traceId: TrimmedNonEmptyString,
   },
+  { httpApiStatus: 502 },
 ) {}
 
 export class RelayEnvironmentEndpointTimedOutError extends Schema.TaggedErrorClass<RelayEnvironmentEndpointTimedOutError>()(
@@ -328,6 +333,7 @@ export class RelayEnvironmentEndpointTimedOutError extends Schema.TaggedErrorCla
     code: Schema.Literal("environment_endpoint_timed_out"),
     traceId: TrimmedNonEmptyString,
   },
+  { httpApiStatus: 504 },
 ) {}
 
 export class RelayEnvironmentLinkFailedError extends Schema.TaggedErrorClass<RelayEnvironmentLinkFailedError>()(
@@ -337,6 +343,7 @@ export class RelayEnvironmentLinkFailedError extends Schema.TaggedErrorClass<Rel
     reason: RelayEnvironmentLinkFailedReason,
     traceId: TrimmedNonEmptyString,
   },
+  { httpApiStatus: 500 },
 ) {}
 
 export class RelayEnvironmentLinkUnavailableError extends Schema.TaggedErrorClass<RelayEnvironmentLinkUnavailableError>()(
@@ -346,6 +353,7 @@ export class RelayEnvironmentLinkUnavailableError extends Schema.TaggedErrorClas
     reason: RelayEnvironmentLinkUnavailableReason,
     traceId: TrimmedNonEmptyString,
   },
+  { httpApiStatus: 503 },
 ) {}
 
 export class RelayAgentActivityPublishProofExpiredError extends Schema.TaggedErrorClass<RelayAgentActivityPublishProofExpiredError>()(
@@ -354,6 +362,7 @@ export class RelayAgentActivityPublishProofExpiredError extends Schema.TaggedErr
     code: Schema.Literal("agent_activity_publish_proof_expired"),
     traceId: TrimmedNonEmptyString,
   },
+  { httpApiStatus: 401 },
 ) {}
 
 export class RelayAgentActivityPublishProofInvalidError extends Schema.TaggedErrorClass<RelayAgentActivityPublishProofInvalidError>()(
@@ -363,6 +372,7 @@ export class RelayAgentActivityPublishProofInvalidError extends Schema.TaggedErr
     reason: RelayAgentActivityPublishProofInvalidReason,
     traceId: TrimmedNonEmptyString,
   },
+  { httpApiStatus: 401 },
 ) {}
 
 export class RelayInternalError extends Schema.TaggedErrorClass<RelayInternalError>()(
@@ -372,6 +382,7 @@ export class RelayInternalError extends Schema.TaggedErrorClass<RelayInternalErr
     reason: RelayInternalErrorReason,
     traceId: TrimmedNonEmptyString,
   },
+  { httpApiStatus: 500 },
 ) {}
 
 export const RelayProtectedError = Schema.Union([
@@ -389,63 +400,30 @@ export const RelayProtectedError = Schema.Union([
 ]);
 export type RelayProtectedError = typeof RelayProtectedError.Type;
 
-const RelayAuthInvalidErrorResponse = RelayAuthInvalidError.pipe(
-  HttpApiSchema.status("Unauthorized"),
-);
-const RelayEnvironmentLinkProofExpiredErrorResponse = RelayEnvironmentLinkProofExpiredError.pipe(
-  HttpApiSchema.status("Unauthorized"),
-);
-const RelayEnvironmentLinkProofInvalidErrorResponse = RelayEnvironmentLinkProofInvalidError.pipe(
-  HttpApiSchema.status("BadRequest"),
-);
-const RelayEnvironmentConnectNotAuthorizedErrorResponse =
-  RelayEnvironmentConnectNotAuthorizedError.pipe(HttpApiSchema.status("Forbidden"));
-const RelayEnvironmentEndpointUnavailableErrorResponse =
-  RelayEnvironmentEndpointUnavailableError.pipe(HttpApiSchema.status("BadGateway"));
-const RelayEnvironmentEndpointTimedOutErrorResponse = RelayEnvironmentEndpointTimedOutError.pipe(
-  HttpApiSchema.status("GatewayTimeout"),
-);
-const RelayEnvironmentLinkFailedErrorResponse = RelayEnvironmentLinkFailedError.pipe(
-  HttpApiSchema.status("InternalServerError"),
-);
-const RelayEnvironmentLinkUnavailableErrorResponse = RelayEnvironmentLinkUnavailableError.pipe(
-  HttpApiSchema.status("ServiceUnavailable"),
-);
-const RelayAgentActivityPublishProofExpiredErrorResponse =
-  RelayAgentActivityPublishProofExpiredError.pipe(HttpApiSchema.status("Unauthorized"));
-const RelayAgentActivityPublishProofInvalidErrorResponse =
-  RelayAgentActivityPublishProofInvalidError.pipe(HttpApiSchema.status("Unauthorized"));
-const RelayInternalErrorResponse = RelayInternalError.pipe(
-  HttpApiSchema.status("InternalServerError"),
-);
-
-const RelayAuthAndInternalErrors = [
-  RelayAuthInvalidErrorResponse,
-  RelayInternalErrorResponse,
-] as const;
+const RelayAuthAndInternalErrors = [RelayAuthInvalidError, RelayInternalError] as const;
 
 const RelayEnvironmentLinkErrors = [
-  RelayAuthInvalidErrorResponse,
-  RelayEnvironmentLinkProofExpiredErrorResponse,
-  RelayEnvironmentLinkProofInvalidErrorResponse,
-  RelayEnvironmentLinkUnavailableErrorResponse,
-  RelayEnvironmentLinkFailedErrorResponse,
-  RelayInternalErrorResponse,
+  RelayAuthInvalidError,
+  RelayEnvironmentLinkProofExpiredError,
+  RelayEnvironmentLinkProofInvalidError,
+  RelayEnvironmentLinkUnavailableError,
+  RelayEnvironmentLinkFailedError,
+  RelayInternalError,
 ] as const;
 
 const RelayEnvironmentConnectErrors = [
-  RelayAuthInvalidErrorResponse,
-  RelayEnvironmentConnectNotAuthorizedErrorResponse,
-  RelayEnvironmentEndpointUnavailableErrorResponse,
-  RelayEnvironmentEndpointTimedOutErrorResponse,
-  RelayInternalErrorResponse,
+  RelayAuthInvalidError,
+  RelayEnvironmentConnectNotAuthorizedError,
+  RelayEnvironmentEndpointUnavailableError,
+  RelayEnvironmentEndpointTimedOutError,
+  RelayInternalError,
 ] as const;
 
 const RelayAgentActivityPublishErrors = [
-  RelayAuthInvalidErrorResponse,
-  RelayAgentActivityPublishProofExpiredErrorResponse,
-  RelayAgentActivityPublishProofInvalidErrorResponse,
-  RelayInternalErrorResponse,
+  RelayAuthInvalidError,
+  RelayAgentActivityPublishProofExpiredError,
+  RelayAgentActivityPublishProofInvalidError,
+  RelayInternalError,
 ] as const;
 
 export interface RelayClientPrincipalShape {
@@ -474,7 +452,7 @@ export class RelayClientAuth extends HttpApiMiddleware.Service<
   RelayClientAuth,
   { provides: RelayClientPrincipal }
 >()("RelayClientAuth", {
-  error: RelayAuthInvalidErrorResponse,
+  error: RelayAuthInvalidError,
   security: { bearer: HttpApiSecurity.bearer },
 }) {}
 
@@ -482,7 +460,7 @@ export class RelayEnvironmentAuth extends HttpApiMiddleware.Service<
   RelayEnvironmentAuth,
   { provides: RelayEnvironmentPrincipal }
 >()("RelayEnvironmentAuth", {
-  error: RelayAuthInvalidErrorResponse,
+  error: RelayAuthInvalidError,
   security: { bearer: HttpApiSecurity.bearer },
 }) {}
 
@@ -497,7 +475,7 @@ export class RelayDpopClientAuth extends HttpApiMiddleware.Service<
   RelayDpopClientAuth,
   { provides: RelayClientPrincipal }
 >()("RelayDpopClientAuth", {
-  error: RelayAuthInvalidErrorResponse,
+  error: RelayAuthInvalidError,
   security: { relayDpop: RelayDpopAuthorization },
 }) {}
 
@@ -730,7 +708,7 @@ export type RelayHealthResponse = typeof RelayHealthResponse.Type;
 export const RelayHealthGroup = HttpApiGroup.make("health").add(
   HttpApiEndpoint.get("health", "/health", {
     success: RelayHealthResponse,
-    error: RelayInternalErrorResponse,
+    error: RelayInternalError,
   }),
 );
 
