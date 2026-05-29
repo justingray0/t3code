@@ -122,6 +122,39 @@ describe("remote", () => {
     }),
   );
 
+  it.effect("submits optional client display metadata during bearer token exchange", () =>
+    Effect.gen(function* () {
+      const fetch = recordedFetch(
+        Response.json(
+          {
+            access_token: "bearer-token",
+            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            token_type: "Bearer",
+            expires_in: 3600,
+            scope: "orchestration:read orchestration:operate terminal:operate review:write",
+          },
+          { status: 200 },
+        ),
+      );
+
+      yield* bootstrapRemoteBearerSession({
+        httpBaseUrl: "https://remote.example.com/",
+        credential: "pairing-token",
+        clientMetadata: {
+          label: "T3 Code Mobile",
+          deviceType: "mobile",
+          os: "iOS",
+        },
+      }).pipe(provideRemoteHttp(fetch.fetchFn));
+
+      expectFetchCall(fetch.calls, 1, {
+        url: "https://remote.example.com/oauth/token",
+        method: "POST",
+        body: "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token=pairing-token&subject_token_type=urn%3At3%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&scope=orchestration%3Aread+orchestration%3Aoperate+terminal%3Aoperate+review%3Awrite&client_label=T3+Code+Mobile&client_device_type=mobile&client_os=iOS",
+      });
+    }),
+  );
+
   it.effect("loads remote session state and websocket tokens over bearer auth", () =>
     Effect.gen(function* () {
       const fetch = recordedFetch(

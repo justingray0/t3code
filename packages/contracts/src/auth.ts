@@ -147,12 +147,31 @@ export const AuthBrowserSessionResult = Schema.Struct({
 });
 export type AuthBrowserSessionResult = typeof AuthBrowserSessionResult.Type;
 
+export const AuthClientMetadataDeviceType = Schema.Literals([
+  "desktop",
+  "mobile",
+  "tablet",
+  "bot",
+  "unknown",
+]);
+export type AuthClientMetadataDeviceType = typeof AuthClientMetadataDeviceType.Type;
+
+export const AuthClientPresentationMetadata = Schema.Struct({
+  label: Schema.optionalKey(TrimmedNonEmptyString),
+  deviceType: Schema.optionalKey(AuthClientMetadataDeviceType),
+  os: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type AuthClientPresentationMetadata = typeof AuthClientPresentationMetadata.Type;
+
 export const AuthTokenExchangeRequest = Schema.Struct({
   grant_type: Schema.Literal(AuthTokenExchangeGrantType),
   subject_token: TrimmedNonEmptyString,
   subject_token_type: Schema.Literal(AuthEnvironmentBootstrapTokenType),
   requested_token_type: Schema.Literal(AuthAccessTokenType),
   scope: TrimmedNonEmptyString,
+  client_label: Schema.optionalKey(TrimmedNonEmptyString),
+  client_device_type: Schema.optionalKey(AuthClientMetadataDeviceType),
+  client_os: Schema.optionalKey(TrimmedNonEmptyString),
 }).pipe(HttpApiSchema.asFormUrlEncoded());
 export type AuthTokenExchangeRequest = typeof AuthTokenExchangeRequest.Type;
 
@@ -189,15 +208,6 @@ export const AuthPairingLink = Schema.Struct({
   expiresAt: Schema.DateTimeUtc,
 });
 export type AuthPairingLink = typeof AuthPairingLink.Type;
-
-export const AuthClientMetadataDeviceType = Schema.Literals([
-  "desktop",
-  "mobile",
-  "tablet",
-  "bot",
-  "unknown",
-]);
-export type AuthClientMetadataDeviceType = typeof AuthClientMetadataDeviceType.Type;
 
 export const AuthClientMetadata = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),

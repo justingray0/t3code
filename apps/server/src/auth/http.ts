@@ -228,7 +228,16 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             .exchangeBootstrapCredentialForAccessToken(
               args.payload.subject_token,
               requestedScopes,
-              deriveAuthClientMetadata({ request }),
+              deriveAuthClientMetadata({
+                request,
+                presented: {
+                  ...(args.payload.client_label ? { label: args.payload.client_label } : {}),
+                  ...(args.payload.client_device_type
+                    ? { deviceType: args.payload.client_device_type }
+                    : {}),
+                  ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
+                },
+              }),
             )
             .pipe(
               Effect.catchTag("ServerAuthInvalidCredentialError", (error) =>

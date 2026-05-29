@@ -1,5 +1,6 @@
 import {
   AuthAccessTokenType,
+  type AuthClientPresentationMetadata,
   AuthEnvironmentBootstrapTokenType,
   AuthStandardClientScopes,
   AuthTokenExchangeGrantType,
@@ -174,6 +175,7 @@ export const bootstrapRemoteBearerSession = Effect.fn(
 )(function* (input: {
   readonly httpBaseUrl: string;
   readonly credential: string;
+  readonly clientMetadata?: AuthClientPresentationMetadata;
   readonly timeoutMs?: number;
 }) {
   const client = yield* makeEnvironmentHttpApiClient(input.httpBaseUrl);
@@ -187,6 +189,11 @@ export const bootstrapRemoteBearerSession = Effect.fn(
         subject_token_type: AuthEnvironmentBootstrapTokenType,
         requested_token_type: AuthAccessTokenType,
         scope: encodeOAuthScope(AuthStandardClientScopes),
+        ...(input.clientMetadata?.label ? { client_label: input.clientMetadata.label } : {}),
+        ...(input.clientMetadata?.deviceType
+          ? { client_device_type: input.clientMetadata.deviceType }
+          : {}),
+        ...(input.clientMetadata?.os ? { client_os: input.clientMetadata.os } : {}),
       },
     }),
   );
