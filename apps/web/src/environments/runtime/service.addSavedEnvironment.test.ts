@@ -1,10 +1,8 @@
-import { EnvironmentHttpUnauthorizedError, EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentAuthInvalidError, EnvironmentId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const decodeEnvironmentHttpUnauthorizedError = Schema.decodeUnknownSync(
-  EnvironmentHttpUnauthorizedError,
-);
+const decodeEnvironmentAuthInvalidError = Schema.decodeUnknownSync(EnvironmentAuthInvalidError);
 
 let mockSavedRecords: Array<Record<string, unknown>> = [];
 
@@ -420,9 +418,11 @@ describe("addSavedEnvironment", () => {
 
   it("does not attempt desktop ssh bearer recovery for non-ssh saved environments", async () => {
     mockWriteSavedEnvironmentBearerToken.mockResolvedValue(true);
-    const authError = decodeEnvironmentHttpUnauthorizedError({
-      _tag: "EnvironmentHttpUnauthorizedError",
-      message: "Unauthorized",
+    const authError = decodeEnvironmentAuthInvalidError({
+      _tag: "EnvironmentAuthInvalidError",
+      code: "auth_invalid",
+      reason: "invalid_credential",
+      traceId: "trace-auth-test",
     });
     mockFetchRemoteSessionState.mockRejectedValueOnce(authError);
 

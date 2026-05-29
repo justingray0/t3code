@@ -46,7 +46,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { clamp } from "effect/Number";
-import { HttpRouter, HttpServerRequest } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
@@ -101,7 +101,7 @@ import {
   SessionCredentialService,
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService.ts";
-import { respondToAuthError } from "./auth/http.ts";
+import { failEnvironmentAuthInvalid } from "./auth/http.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 
@@ -1427,7 +1427,13 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         const request = yield* HttpServerRequest.HttpServerRequest;
         const serverAuth = yield* ServerAuth;
         const sessions = yield* SessionCredentialService;
-        const session = yield* serverAuth.authenticateWebSocketUpgrade(request);
+        const session = yield* serverAuth
+          .authenticateWebSocketUpgrade(request)
+          .pipe(
+            Effect.catchTag("ServerAuthInvalidCredentialError", (error) =>
+              failEnvironmentAuthInvalid(error.reason),
+            ),
+          );
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
           disableTracing: true,
         }).pipe(
@@ -1464,14 +1470,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           () => rpcWebSocketHttpEffect,
           () => sessions.markDisconnected(session.sessionId),
         );
-      }).pipe(
-        Effect.catchTags({
-          EnvironmentHttpBadRequestError: respondToAuthError,
-          EnvironmentHttpUnauthorizedError: respondToAuthError,
-          EnvironmentHttpForbiddenError: respondToAuthError,
-          ServerAuthInternalError: respondToAuthError,
-        }),
-      ),
+      }).pipe(Effect.catchTag("EnvironmentAuthInvalidError", HttpServerRespondable.toResponse)),
     ),
   ),
 );

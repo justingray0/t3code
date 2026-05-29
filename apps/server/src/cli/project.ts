@@ -96,7 +96,11 @@ const withProjectCliLiveServerTimeout = <A, E, R>(effect: Effect.Effect<A, E, R>
 
 const failLiveServerRequest = (cause: unknown) => {
   if (isEnvironmentHttpCommonError(cause)) {
-    return Effect.fail(new ProjectCommandError({ message: cause.message }));
+    return Effect.fail(
+      new ProjectCommandError({
+        message: `Server request failed (${cause.code}, trace ${cause.traceId}).`,
+      }),
+    );
   }
   if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
     return Effect.fail(

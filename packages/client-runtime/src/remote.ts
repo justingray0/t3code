@@ -8,10 +8,11 @@ import {
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import type {
-  EnvironmentHttpBadRequestError,
-  EnvironmentHttpForbiddenError,
-  EnvironmentHttpInternalServerError,
-  EnvironmentHttpUnauthorizedError,
+  EnvironmentAuthInvalidError,
+  EnvironmentInternalError,
+  EnvironmentOperationForbiddenError,
+  EnvironmentRequestInvalidError,
+  EnvironmentScopeRequiredError,
 } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
@@ -88,10 +89,11 @@ export class RemoteEnvironmentAuthTimeoutError extends Data.TaggedError(
 }
 
 export type RemoteEnvironmentAuthError =
-  | EnvironmentHttpBadRequestError
-  | EnvironmentHttpUnauthorizedError
-  | EnvironmentHttpForbiddenError
-  | EnvironmentHttpInternalServerError
+  | EnvironmentRequestInvalidError
+  | EnvironmentAuthInvalidError
+  | EnvironmentScopeRequiredError
+  | EnvironmentOperationForbiddenError
+  | EnvironmentInternalError
   | RemoteEnvironmentAuthFetchError
   | RemoteEnvironmentAuthInvalidJsonError
   | RemoteEnvironmentAuthUndeclaredStatusError

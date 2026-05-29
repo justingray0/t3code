@@ -48,7 +48,7 @@ const requestMetadata = {
 };
 
 it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
-  it.effect("maps invalid bootstrap credential failures to 401", () =>
+  it.effect("classifies invalid bootstrap credential failures for the HTTP boundary", () =>
     Effect.sync(() => {
       const error = toBootstrapExchangeError(
         new BootstrapCredentialError({
@@ -57,8 +57,10 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
         }),
       );
 
-      expect(error._tag).toBe("EnvironmentHttpUnauthorizedError");
-      expect(error.message).toBe("Invalid bootstrap credential.");
+      expect(error._tag).toBe("ServerAuthInvalidCredentialError");
+      if (error._tag === "ServerAuthInvalidCredentialError") {
+        expect(error.reason).toBe("invalid_credential");
+      }
     }),
   );
 
@@ -114,8 +116,10 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
         )
         .pipe(Effect.flip);
 
-      expect(error._tag).toBe("EnvironmentHttpBadRequestError");
-      expect(error.message).toContain("exceeds the bootstrap credential grant");
+      expect(error._tag).toBe("ServerAuthInvalidRequestError");
+      if (error._tag === "ServerAuthInvalidRequestError") {
+        expect(error.reason).toBe("scope_not_granted");
+      }
     }).pipe(Effect.provide(makeServerAuthLayer())),
   );
 

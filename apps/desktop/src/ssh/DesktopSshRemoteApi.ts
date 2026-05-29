@@ -65,17 +65,20 @@ const make = Effect.gen(function* () {
   const provideHttpClient = <A, E>(effect: Effect.Effect<A, E, HttpClient.HttpClient>) =>
     effect.pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
 
-  const fetchEnvironmentDescriptor = Effect.fn("desktop.sshRemoteApi.fetchEnvironmentDescriptor")(
-    function* ({ httpBaseUrl }: { readonly httpBaseUrl: string }) {
-      return yield* fetchRemoteEnvironmentDescriptor({
-        httpBaseUrl: yield* resolveLoopbackSshHttpBaseUrl(httpBaseUrl),
-      });
-    },
-    Effect.mapError(mapError("fetch-environment-descriptor")),
-    provideHttpClient,
-  );
-  const bootstrapBearerSession = Effect.fn("desktop.sshRemoteApi.bootstrapBearerSession")(
-    function* (input: { readonly httpBaseUrl: string; readonly credential: string }) {
+  const fetchEnvironmentDescriptor: DesktopSshRemoteApiShape["fetchEnvironmentDescriptor"] =
+    Effect.fn("desktop.sshRemoteApi.fetchEnvironmentDescriptor")(
+      function* ({ httpBaseUrl }) {
+        return yield* fetchRemoteEnvironmentDescriptor({
+          httpBaseUrl: yield* resolveLoopbackSshHttpBaseUrl(httpBaseUrl),
+        });
+      },
+      Effect.mapError(mapError("fetch-environment-descriptor")),
+      provideHttpClient,
+    );
+  const bootstrapBearerSession: DesktopSshRemoteApiShape["bootstrapBearerSession"] = Effect.fn(
+    "desktop.sshRemoteApi.bootstrapBearerSession",
+  )(
+    function* (input) {
       return yield* bootstrapRemoteBearerSession({
         httpBaseUrl: yield* resolveLoopbackSshHttpBaseUrl(input.httpBaseUrl),
         credential: input.credential,
@@ -84,8 +87,10 @@ const make = Effect.gen(function* () {
     Effect.mapError(mapError("bootstrap-bearer-session")),
     provideHttpClient,
   );
-  const fetchSessionState = Effect.fn("desktop.sshRemoteApi.fetchSessionState")(
-    function* (input: { readonly httpBaseUrl: string; readonly bearerToken: string }) {
+  const fetchSessionState: DesktopSshRemoteApiShape["fetchSessionState"] = Effect.fn(
+    "desktop.sshRemoteApi.fetchSessionState",
+  )(
+    function* (input) {
       return yield* fetchRemoteSessionState({
         httpBaseUrl: yield* resolveLoopbackSshHttpBaseUrl(input.httpBaseUrl),
         bearerToken: input.bearerToken,
@@ -94,8 +99,10 @@ const make = Effect.gen(function* () {
     Effect.mapError(mapError("fetch-session-state")),
     provideHttpClient,
   );
-  const issueWebSocketTicket = Effect.fn("desktop.sshRemoteApi.issueWebSocketTicket")(
-    function* (input: { readonly httpBaseUrl: string; readonly bearerToken: string }) {
+  const issueWebSocketTicket: DesktopSshRemoteApiShape["issueWebSocketTicket"] = Effect.fn(
+    "desktop.sshRemoteApi.issueWebSocketTicket",
+  )(
+    function* (input) {
       return yield* issueRemoteWebSocketTicket({
         httpBaseUrl: yield* resolveLoopbackSshHttpBaseUrl(input.httpBaseUrl),
         bearerToken: input.bearerToken,

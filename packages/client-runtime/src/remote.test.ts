@@ -5,7 +5,7 @@ import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
-import { EnvironmentHttpUnauthorizedError } from "@t3tools/contracts";
+import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
 import {
   bootstrapRemoteBearerSession,
   fetchRemoteEnvironmentDescriptor,
@@ -17,7 +17,7 @@ import {
   resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
 
-const isEnvironmentHttpUnauthorizedError = Schema.is(EnvironmentHttpUnauthorizedError);
+const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
 
 type FetchCall = readonly [input: RequestInfo | URL, init: RequestInit];
 
@@ -238,7 +238,12 @@ describe("remote", () => {
     Effect.gen(function* () {
       const fetch = recordedFetch(
         Response.json(
-          { _tag: "EnvironmentHttpUnauthorizedError", message: "Authentication required." },
+          {
+            _tag: "EnvironmentAuthInvalidError",
+            code: "auth_invalid",
+            reason: "missing_credential",
+            traceId: "trace-auth-test",
+          },
           { status: 401 },
         ),
       );
@@ -248,9 +253,10 @@ describe("remote", () => {
         bearerToken: "expired-token",
       }).pipe(provideRemoteHttp(fetch.fetchFn), Effect.flip);
 
-      expect(isEnvironmentHttpUnauthorizedError(error)).toBe(true);
-      if (isEnvironmentHttpUnauthorizedError(error)) {
-        expect(error.message).toBe("Authentication required.");
+      expect(isEnvironmentAuthInvalidError(error)).toBe(true);
+      if (isEnvironmentAuthInvalidError(error)) {
+        expect(error.reason).toBe("missing_credential");
+        expect(error.traceId).toBe("trace-auth-test");
       }
     }),
   );

@@ -3,9 +3,6 @@ import {
   AuthAccessTokenType,
   AuthAdministrativeScopes,
   AuthStandardClientScopes,
-  EnvironmentHttpBadRequestError,
-  EnvironmentHttpForbiddenError,
-  EnvironmentHttpUnauthorizedError,
   type AuthAccessTokenResult,
   type AuthClientSession,
   type AuthBrowserSessionResult,
@@ -28,8 +25,10 @@ import { ServerAuthPolicy } from "../Services/ServerAuthPolicy.ts";
 import {
   ServerAuth,
   type AuthenticatedSession,
+  ServerAuthForbiddenOperationError,
   ServerAuthInternalError,
-  type ServerAuthError,
+  ServerAuthInvalidCredentialError,
+  ServerAuthInvalidRequestError,
   type ServerAuthShape,
 } from "../Services/ServerAuth.ts";
 import {
@@ -46,7 +45,9 @@ type BootstrapExchangeResult = {
 const AUTHORIZATION_PREFIX = "Bearer ";
 const WEBSOCKET_TICKET_QUERY_PARAM = "wsTicket";
 
-export function toBootstrapExchangeError(cause: BootstrapCredentialError): ServerAuthError {
+export function toBootstrapExchangeError(
+  cause: BootstrapCredentialError,
+): ServerAuthInvalidCredentialError | ServerAuthInternalError {
   if (cause.status === 500) {
     return new ServerAuthInternalError({
       message: "Failed to validate bootstrap credential.",
@@ -54,8 +55,9 @@ export function toBootstrapExchangeError(cause: BootstrapCredentialError): Serve
     });
   }
 
-  return new EnvironmentHttpUnauthorizedError({
-    message: "Invalid bootstrap credential.",
+  return new ServerAuthInvalidCredentialError({
+    reason: "invalid_credential",
+    cause,
   });
 }
 
@@ -77,7 +79,7 @@ export const makeServerAuth = Effect.gen(function* () {
 
   const authenticateToken = (
     token: string,
-  ): Effect.Effect<AuthenticatedSession, EnvironmentHttpUnauthorizedError> =>
+  ): Effect.Effect<AuthenticatedSession, ServerAuthInvalidCredentialError> =>
     sessions.verify(token).pipe(
       Effect.tapError((cause: SessionCredentialError) =>
         Effect.logWarning("Rejected authenticated session credential.").pipe(
@@ -94,7 +96,7 @@ export const makeServerAuth = Effect.gen(function* () {
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
       })),
       Effect.mapError(
-        () => new EnvironmentHttpUnauthorizedError({ message: "Unauthorized request." }),
+        (cause) => new ServerAuthInvalidCredentialError({ reason: "invalid_credential", cause }),
       ),
     );
 
@@ -103,9 +105,7 @@ export const makeServerAuth = Effect.gen(function* () {
     const bearerToken = parseBearerToken(request);
     const credential = cookieToken ?? bearerToken;
     if (!credential) {
-      return Effect.fail(
-        new EnvironmentHttpUnauthorizedError({ message: "Authentication required." }),
-      );
+      return Effect.fail(new ServerAuthInvalidCredentialError({ reason: "missing_credential" }));
     }
     return authenticateToken(credential);
   };
@@ -122,7 +122,7 @@ export const makeServerAuth = Effect.gen(function* () {
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
           }) satisfies AuthSessionState,
       ),
-      Effect.catchTag("EnvironmentHttpUnauthorizedError", () =>
+      Effect.catchTag("ServerAuthInvalidCredentialError", () =>
         Effect.succeed({
           authenticated: false,
           auth: descriptor,
@@ -178,8 +178,8 @@ export const makeServerAuth = Effect.gen(function* () {
         Effect.flatMap((grant) =>
           Effect.gen(function* () {
             if (!requestedScopes.every((scope) => grant.scopes.includes(scope))) {
-              return yield* new EnvironmentHttpBadRequestError({
-                message: "Requested scope exceeds the bootstrap credential grant.",
+              return yield* new ServerAuthInvalidRequestError({
+                reason: "scope_not_granted",
               });
             }
             return yield* sessions
@@ -299,8 +299,8 @@ export const makeServerAuth = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       if (currentSessionId === targetSessionId) {
-        return yield* new EnvironmentHttpForbiddenError({
-          message: "Use revoke other clients to keep the current administrative session active.",
+        return yield* new ServerAuthForbiddenOperationError({
+          reason: "current_session_revoke_not_allowed",
         });
       }
       return yield* authControlPlane.revokeSession(targetSessionId).pipe(
@@ -371,7 +371,8 @@ export const makeServerAuth = Effect.gen(function* () {
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
             })),
             Effect.mapError(
-              () => new EnvironmentHttpUnauthorizedError({ message: "Unauthorized request." }),
+              (cause) =>
+                new ServerAuthInvalidCredentialError({ reason: "invalid_credential", cause }),
             ),
           );
         }

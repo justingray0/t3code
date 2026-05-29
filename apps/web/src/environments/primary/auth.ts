@@ -126,22 +126,38 @@ function readHttpApiStatus(error: unknown): number | null {
 
 function readEnvironmentHttpErrorStatus(error: EnvironmentHttpCommonErrorType): number {
   switch (error._tag) {
-    case "EnvironmentHttpBadRequestError":
+    case "EnvironmentRequestInvalidError":
       return 400;
-    case "EnvironmentHttpUnauthorizedError":
+    case "EnvironmentAuthInvalidError":
       return 401;
-    case "EnvironmentHttpForbiddenError":
+    case "EnvironmentScopeRequiredError":
+    case "EnvironmentOperationForbiddenError":
       return 403;
-    case "EnvironmentHttpInternalServerError":
+    case "EnvironmentInternalError":
       return 500;
   }
 }
 
 function readHttpApiErrorMessage(error: unknown, fallbackMessage: string): string {
-  if (isEnvironmentHttpCommonError(error)) {
-    return error.message;
+  if (!isEnvironmentHttpCommonError(error)) {
+    return fallbackMessage;
   }
-  return fallbackMessage;
+  switch (error._tag) {
+    case "EnvironmentAuthInvalidError":
+      return error.reason === "missing_credential"
+        ? "Authentication required."
+        : "Invalid bootstrap credential.";
+    case "EnvironmentRequestInvalidError":
+      return error.reason === "invalid_scope"
+        ? "Requested token scope is invalid."
+        : "Requested scope exceeds the bootstrap credential grant.";
+    case "EnvironmentScopeRequiredError":
+      return `The authenticated token is missing required scope: ${error.requiredScope}.`;
+    case "EnvironmentOperationForbiddenError":
+      return "This operation is not allowed for the current session.";
+    case "EnvironmentInternalError":
+      return fallbackMessage;
+  }
 }
 
 const INVALID_BOOTSTRAP_CREDENTIAL_MESSAGES = new Set([

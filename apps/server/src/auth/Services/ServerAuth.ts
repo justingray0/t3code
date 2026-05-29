@@ -13,11 +13,6 @@ import type {
   ServerAuthSessionMethod,
   AuthWebSocketTicketResult,
 } from "@t3tools/contracts";
-import {
-  EnvironmentHttpBadRequestError,
-  EnvironmentHttpForbiddenError,
-  EnvironmentHttpUnauthorizedError,
-} from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
@@ -37,11 +32,24 @@ export class ServerAuthInternalError extends Data.TaggedError("ServerAuthInterna
   readonly cause?: unknown;
 }> {}
 
-export type ServerAuthError =
-  | EnvironmentHttpBadRequestError
-  | EnvironmentHttpForbiddenError
-  | EnvironmentHttpUnauthorizedError
-  | ServerAuthInternalError;
+export class ServerAuthInvalidCredentialError extends Data.TaggedError(
+  "ServerAuthInvalidCredentialError",
+)<{
+  readonly reason: "missing_credential" | "invalid_credential";
+  readonly cause?: unknown;
+}> {}
+
+export class ServerAuthInvalidRequestError extends Data.TaggedError(
+  "ServerAuthInvalidRequestError",
+)<{
+  readonly reason: "invalid_scope" | "scope_not_granted";
+}> {}
+
+export class ServerAuthForbiddenOperationError extends Data.TaggedError(
+  "ServerAuthForbiddenOperationError",
+)<{
+  readonly reason: "current_session_revoke_not_allowed";
+}> {}
 
 export interface ServerAuthShape {
   readonly getDescriptor: () => Effect.Effect<ServerAuthDescriptor>;
@@ -56,40 +64,48 @@ export interface ServerAuthShape {
       readonly response: AuthBrowserSessionResult;
       readonly sessionToken: string;
     },
-    ServerAuthError
+    ServerAuthInvalidCredentialError | ServerAuthInternalError
   >;
   readonly exchangeBootstrapCredentialForAccessToken: (
     credential: string,
     requestedScopes: ReadonlyArray<AuthEnvironmentScope>,
     requestMetadata: AuthClientMetadata,
-  ) => Effect.Effect<AuthAccessTokenResult, ServerAuthError>;
+  ) => Effect.Effect<
+    AuthAccessTokenResult,
+    ServerAuthInvalidCredentialError | ServerAuthInvalidRequestError | ServerAuthInternalError
+  >;
   readonly issuePairingCredential: (
     input?: AuthCreatePairingCredentialInput & {
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
     },
-  ) => Effect.Effect<AuthPairingCredentialResult, ServerAuthError>;
-  readonly listPairingLinks: () => Effect.Effect<ReadonlyArray<AuthPairingLink>, ServerAuthError>;
-  readonly revokePairingLink: (id: string) => Effect.Effect<boolean, ServerAuthError>;
+  ) => Effect.Effect<AuthPairingCredentialResult, ServerAuthInternalError>;
+  readonly listPairingLinks: () => Effect.Effect<
+    ReadonlyArray<AuthPairingLink>,
+    ServerAuthInternalError
+  >;
+  readonly revokePairingLink: (id: string) => Effect.Effect<boolean, ServerAuthInternalError>;
   readonly listClientSessions: (
     currentSessionId: AuthSessionId,
-  ) => Effect.Effect<ReadonlyArray<AuthClientSession>, ServerAuthError>;
+  ) => Effect.Effect<ReadonlyArray<AuthClientSession>, ServerAuthInternalError>;
   readonly revokeClientSession: (
     currentSessionId: AuthSessionId,
     targetSessionId: AuthSessionId,
-  ) => Effect.Effect<boolean, ServerAuthError>;
+  ) => Effect.Effect<boolean, ServerAuthForbiddenOperationError | ServerAuthInternalError>;
   readonly revokeOtherClientSessions: (
     currentSessionId: AuthSessionId,
-  ) => Effect.Effect<number, ServerAuthError>;
+  ) => Effect.Effect<number, ServerAuthInternalError>;
   readonly authenticateHttpRequest: (
     request: HttpServerRequest.HttpServerRequest,
-  ) => Effect.Effect<AuthenticatedSession, ServerAuthError>;
+  ) => Effect.Effect<AuthenticatedSession, ServerAuthInvalidCredentialError>;
   readonly authenticateWebSocketUpgrade: (
     request: HttpServerRequest.HttpServerRequest,
-  ) => Effect.Effect<AuthenticatedSession, ServerAuthError>;
+  ) => Effect.Effect<AuthenticatedSession, ServerAuthInvalidCredentialError>;
   readonly issueWebSocketTicket: (
     session: Pick<AuthenticatedSession, "sessionId">,
-  ) => Effect.Effect<AuthWebSocketTicketResult, ServerAuthError>;
-  readonly issueStartupPairingUrl: (baseUrl: string) => Effect.Effect<string, ServerAuthError>;
+  ) => Effect.Effect<AuthWebSocketTicketResult, ServerAuthInternalError>;
+  readonly issueStartupPairingUrl: (
+    baseUrl: string,
+  ) => Effect.Effect<string, ServerAuthInternalError>;
 }
 
 export class ServerAuth extends Context.Service<ServerAuth, ServerAuthShape>()(

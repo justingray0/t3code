@@ -1209,10 +1209,20 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           authorization: `Bearer ${tokenBody.access_token ?? ""}`,
         },
       });
+      const faviconBody = (yield* faviconResponse.json) as {
+        readonly _tag: string;
+        readonly code: string;
+        readonly requiredScope: string;
+        readonly traceId: string;
+      };
 
       assert.equal(pairingResponse.status, 200);
       assert.equal(wsTicketResponse.status, 200);
       assert.equal(faviconResponse.status, 403);
+      assert.equal(faviconBody._tag, "EnvironmentScopeRequiredError");
+      assert.equal(faviconBody.code, "insufficient_scope");
+      assert.equal(faviconBody.requiredScope, "orchestration:read");
+      assert.equal(typeof faviconBody.traceId, "string");
 
       const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
       const rpcError = yield* Effect.flip(
@@ -1304,13 +1314,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       const body = (yield* response.json) as {
         readonly _tag?: string;
-        readonly message?: string;
+        readonly code?: string;
+        readonly reason?: string;
+        readonly traceId?: string;
       };
 
       assert.equal(response.status, 401);
       assertBrowserApiCorsHeaders(response.headers);
-      assert.equal(body._tag, "EnvironmentHttpUnauthorizedError");
-      assert.equal(body.message, "Authentication required.");
+      assert.equal(body._tag, "EnvironmentAuthInvalidError");
+      assert.equal(body.code, "auth_invalid");
+      assert.equal(body.reason, "missing_credential");
+      assert.equal(typeof body.traceId, "string");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1449,15 +1463,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       const pairedBody = (yield* pairedResponse.json) as {
         readonly _tag: string;
-        readonly message: string;
+        readonly code: string;
+        readonly requiredScope: string;
+        readonly traceId: string;
       };
 
       assert.equal(pairedResponse.status, 403);
-      assert.equal(pairedBody._tag, "EnvironmentHttpForbiddenError");
-      assert.equal(
-        pairedBody.message,
-        "The authenticated token is missing required scope: access:manage.",
-      );
+      assert.equal(pairedBody._tag, "EnvironmentScopeRequiredError");
+      assert.equal(pairedBody.code, "insufficient_scope");
+      assert.equal(pairedBody.requiredScope, "access:manage");
+      assert.equal(typeof pairedBody.traceId, "string");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1537,7 +1552,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       const pairedClientPairingBody = (yield* pairedClientPairingResponse.json) as {
         readonly _tag: string;
-        readonly message: string;
+        readonly code: string;
+        readonly reason: string;
+        readonly traceId: string;
       };
 
       assert.equal(listBeforeResponse.status, 200);
@@ -1558,8 +1575,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.lengthOf(clientsAfter, 1);
       assert.equal(clientsAfter[0]?.current, true);
       assert.equal(pairedClientPairingResponse.status, 401);
-      assert.equal(pairedClientPairingBody._tag, "EnvironmentHttpUnauthorizedError");
-      assert.equal(pairedClientPairingBody.message, "Unauthorized request.");
+      assert.equal(pairedClientPairingBody._tag, "EnvironmentAuthInvalidError");
+      assert.equal(pairedClientPairingBody.code, "auth_invalid");
+      assert.equal(pairedClientPairingBody.reason, "invalid_credential");
+      assert.equal(typeof pairedClientPairingBody.traceId, "string");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1624,14 +1643,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(first.response.status, 200);
       assert.equal(second.response.status, 401);
-      assert.equal(
-        (second.body as { readonly message?: string }).message,
-        "Invalid bootstrap credential.",
-      );
-      assert.equal(
-        (second.body as { readonly _tag?: string })._tag,
-        "EnvironmentHttpUnauthorizedError",
-      );
+      assert.equal((second.body as { readonly _tag?: string })._tag, "EnvironmentAuthInvalidError");
+      assert.equal((second.body as { readonly code?: string }).code, "auth_invalid");
+      assert.equal((second.body as { readonly reason?: string }).reason, "invalid_credential");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

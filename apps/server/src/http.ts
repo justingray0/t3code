@@ -3,7 +3,6 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
-  EnvironmentHttpForbiddenError,
 } from "@t3tools/contracts";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as Data from "effect/Data";
@@ -19,6 +18,7 @@ import {
   HttpRouter,
   HttpServerResponse,
   HttpServerRequest,
+  HttpServerRespondable,
 } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { OtlpTracer } from "effect/unstable/observability";
@@ -33,7 +33,11 @@ import { resolveStaticDir, ServerConfig } from "./config.ts";
 import { BrowserTraceCollector } from "./observability/Services/BrowserTraceCollector.ts";
 import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
-import { respondToAuthError } from "./auth/http.ts";
+import {
+  annotateEnvironmentRequest,
+  failEnvironmentScopeRequired,
+  failEnvironmentAuthInvalid,
+} from "./auth/http.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { browserApiCorsHeaders } from "./httpCors.ts";
 
@@ -83,11 +87,15 @@ const requireEnvironmentScope = (
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* ServerAuth;
-    const session = yield* serverAuth.authenticateHttpRequest(request);
+    const session = yield* serverAuth
+      .authenticateHttpRequest(request)
+      .pipe(
+        Effect.catchTag("ServerAuthInvalidCredentialError", (error) =>
+          failEnvironmentAuthInvalid(error.reason),
+        ),
+      );
     if (!session.scopes.includes(scope)) {
-      return yield* new EnvironmentHttpForbiddenError({
-        message: `The authenticated token is missing required scope: ${scope}.`,
-      });
+      return yield* failEnvironmentScopeRequired(scope);
     }
   });
 
@@ -96,10 +104,13 @@ export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
   "metadata",
   Effect.fnUntraced(function* (handlers) {
     const serverEnvironment = yield* ServerEnvironment;
-    const descriptorHandler = Effect.fn("environment.metadata.descriptor")(function* () {
-      return yield* serverEnvironment.getDescriptor;
-    });
-    return handlers.handle("descriptor", descriptorHandler);
+    return handlers.handle(
+      "descriptor",
+      Effect.fn("environment.metadata.descriptor")(function* (args) {
+        yield* annotateEnvironmentRequest(args.endpoint.name);
+        return yield* serverEnvironment.getDescriptor;
+      }),
+    );
   }),
 );
 
@@ -156,10 +167,8 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
       );
   }).pipe(
     Effect.catchTags({
-      EnvironmentHttpBadRequestError: respondToAuthError,
-      EnvironmentHttpUnauthorizedError: respondToAuthError,
-      EnvironmentHttpForbiddenError: respondToAuthError,
-      ServerAuthInternalError: respondToAuthError,
+      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
     }),
   ),
 );
@@ -219,10 +228,8 @@ export const attachmentsRouteLayer = HttpRouter.add(
     );
   }).pipe(
     Effect.catchTags({
-      EnvironmentHttpBadRequestError: respondToAuthError,
-      EnvironmentHttpUnauthorizedError: respondToAuthError,
-      EnvironmentHttpForbiddenError: respondToAuthError,
-      ServerAuthInternalError: respondToAuthError,
+      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
     }),
   ),
 );
@@ -267,10 +274,8 @@ export const projectFaviconRouteLayer = HttpRouter.add(
     );
   }).pipe(
     Effect.catchTags({
-      EnvironmentHttpBadRequestError: respondToAuthError,
-      EnvironmentHttpUnauthorizedError: respondToAuthError,
-      EnvironmentHttpForbiddenError: respondToAuthError,
-      ServerAuthInternalError: respondToAuthError,
+      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
     }),
   ),
 );

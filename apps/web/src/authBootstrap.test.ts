@@ -415,8 +415,10 @@ describe("resolveInitialServerAuthGateState", () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
       jsonResponse(
         {
-          _tag: "EnvironmentHttpUnauthorizedError",
-          message: "Invalid bootstrap credential.",
+          _tag: "EnvironmentAuthInvalidError",
+          code: "auth_invalid",
+          reason: "invalid_credential",
+          traceId: "trace-invalid-credential",
         },
         {
           status: 401,

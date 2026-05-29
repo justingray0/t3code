@@ -8,7 +8,7 @@ import {
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamEvent,
   type ServerConfig,
-  EnvironmentHttpUnauthorizedError,
+  EnvironmentAuthInvalidError,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -101,7 +101,7 @@ type ThreadDetailSubscriptionEntry = {
 };
 
 const environmentConnections = new Map<EnvironmentId, EnvironmentConnection>();
-const isEnvironmentHttpUnauthorizedError = Schema.is(EnvironmentHttpUnauthorizedError);
+const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
 
 function isSavedEnvironmentConnectionCancelledError(
   error: unknown,
@@ -1418,7 +1418,7 @@ async function ensureSavedEnvironmentConnection(
         } catch (error) {
           const isAuthError = activeRecord.desktopSsh
             ? isSshHttpAuthError(error, 401)
-            : isEnvironmentHttpUnauthorizedError(error);
+            : isEnvironmentAuthInvalidError(error);
           if (!isAuthError) {
             throw error;
           }
