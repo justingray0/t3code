@@ -10,7 +10,6 @@ import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 
 import { PlanetscaleDatabase, RelayHyperdrive } from "./src/db.ts";
 import Api from "./src/worker.ts";
-import { CloudMintKeyPairProvider } from "./src/infra/CloudMintKeyPair.ts";
 import { ImportedCloudflareZoneProvider } from "./src/infra/ImportedCloudflareZone.ts";
 import {
   MANAGED_ENDPOINT_ZONE,
@@ -29,7 +28,6 @@ export default Alchemy.Stack(
       Drizzle.providers(),
       Planetscale.providers(),
       FetchHttpClient.layer,
-      CloudMintKeyPairProvider(),
       ImportedCloudflareZoneProvider(),
       WorkerCustomDomainProvider(),
     ),

@@ -33,7 +33,6 @@ import {
   traceRelayHttpRequest,
   tokenApi,
 } from "./api.ts";
-import { CloudMintKeyPair } from "./infra/CloudMintKeyPair.ts";
 import {
   MANAGED_ENDPOINT_ZONE,
   managedEndpointBaseDomain,
@@ -173,71 +172,68 @@ export default class Api extends Cloudflare.Worker<Api>()(
         ),
       },
     );
-    const relayIssuer = yield* Alchemy.Variable(
+    const relayIssuer = yield* Output.named(
+      Output.map(managedEndpointZone.name, (name) => relayPublicOrigin({ name })),
       "RELAY_ISSUER",
-      Output.map(managedEndpointZone.name, (name) => relayPublicOrigin({ name })) as never,
     );
-    const managedEndpointBaseDomainValue = yield* Alchemy.Variable(
-      "MANAGED_ENDPOINT_BASE_DOMAIN",
+    const managedEndpointBaseDomainValue = yield* Output.named(
       Output.map(managedEndpointZone.name, (name) =>
         managedEndpointBaseDomain({
           name,
           baseSubdomain: MANAGED_ENDPOINT_ZONE.baseSubdomain,
         }),
-      ) as never,
+      ),
+      "MANAGED_ENDPOINT_BASE_DOMAIN",
     );
-    const managedEndpointCloudflareAccountId = yield* Alchemy.Secret(
+    const managedEndpointCloudflareAccountId = yield* Output.named(
+      Output.map(managedEndpointZone.accountId, Redacted.make),
       "MANAGED_ENDPOINT_CLOUDFLARE_ACCOUNT_ID",
-      managedEndpointZone.accountId as never,
     );
-    const managedEndpointCloudflareZoneId = yield* Alchemy.Secret(
+    const managedEndpointCloudflareZoneId = yield* Output.named(
+      Output.map(managedEndpointZone.zoneId, Redacted.make),
       "MANAGED_ENDPOINT_CLOUDFLARE_ZONE_ID",
-      managedEndpointZone.zoneId as never,
     );
-    const managedEndpointCloudflareApiToken = yield* Alchemy.Secret(
+    const managedEndpointCloudflareApiToken = yield* Output.named(
+      managedEndpointProvisionerToken.value,
       "MANAGED_ENDPOINT_CLOUDFLARE_API_TOKEN",
-      managedEndpointProvisionerToken.value as never,
     );
     const relayHyperdrive = yield* RelayHyperdrive;
     const apnsDeliveryQueue = yield* RelayApnsDeliveryQueue;
     const apnsDeliveryDeadLetterQueue = yield* RelayApnsDeliveryDeadLetterQueue;
     const hyperdrive = yield* Cloudflare.Hyperdrive.bind(relayHyperdrive);
     const apnsDeliveryQueueSender = yield* Cloudflare.QueueBinding.bind(apnsDeliveryQueue);
-    const cloudMintKeyPair = yield* CloudMintKeyPair("CloudMintKeyPair");
-    const environment = yield* Alchemy.Variable(
-      "APNS_ENVIRONMENT",
-      Config.schema(Settings.ApnsEnvironment, "APNS_ENVIRONMENT").pipe(
-        Config.withDefault("sandbox"),
-      ),
+    const cloudMintKeyPair = yield* Alchemy.KeyPair("CloudMintKeyPair");
+    const environment = yield* Config.schema(Settings.ApnsEnvironment, "APNS_ENVIRONMENT").pipe(
+      Config.withDefault("sandbox"),
     );
-    const apnsTeamId = yield* Alchemy.Secret("APNS_TEAM_ID");
-    const apnsKeyId = yield* Alchemy.Secret("APNS_KEY_ID");
-    const apnsBundleId = yield* Alchemy.Secret("APNS_BUNDLE_ID");
-    const apnsPrivateKey = yield* Alchemy.Secret("APNS_PRIVATE_KEY");
+    const apnsTeamId = yield* Config.redacted("APNS_TEAM_ID");
+    const apnsKeyId = yield* Config.redacted("APNS_KEY_ID");
+    const apnsBundleId = yield* Config.redacted("APNS_BUNDLE_ID");
+    const apnsPrivateKey = yield* Config.redacted("APNS_PRIVATE_KEY");
     const relayObservability = yield* provisionRelayObservability;
-    const axiomIngestToken = yield* Alchemy.Secret(
+    const axiomIngestToken = yield* Output.named(
+      relayObservability.ingestToken.token,
       "AXIOM_INGEST_TOKEN",
-      relayObservability.ingestToken.token as any,
     );
-    const axiomLogsEndpoint = yield* Alchemy.Variable(
+    const axiomLogsEndpoint = yield* Output.named(
+      relayObservability.events.otelLogsEndpoint,
       "AXIOM_OTEL_LOGS_ENDPOINT",
-      relayObservability.events.otelLogsEndpoint as never,
     );
-    const axiomTracesEndpoint = yield* Alchemy.Variable(
+    const axiomTracesEndpoint = yield* Output.named(
+      relayObservability.events.otelTracesEndpoint,
       "AXIOM_OTEL_TRACES_ENDPOINT",
-      relayObservability.events.otelTracesEndpoint as never,
     );
-    const axiomMetricsEndpoint = yield* Alchemy.Variable(
+    const axiomMetricsEndpoint = yield* Output.named(
+      relayObservability.metrics.otelMetricsEndpoint,
       "AXIOM_OTEL_METRICS_ENDPOINT",
-      relayObservability.metrics.otelMetricsEndpoint as never,
     );
-    const axiomEventsDatasetName = yield* Alchemy.Variable(
+    const axiomEventsDatasetName = yield* Output.named(
+      relayObservability.events.name,
       "AXIOM_EVENTS_DATASET",
-      relayObservability.events.name as never,
     );
-    const axiomMetricsDatasetName = yield* Alchemy.Variable(
+    const axiomMetricsDatasetName = yield* Output.named(
+      relayObservability.metrics.name,
       "AXIOM_METRICS_DATASET",
-      relayObservability.metrics.name as never,
     );
     const relayTelemetryLayer = Layer.unwrap(
       Effect.gen(function* () {
@@ -255,18 +251,18 @@ export default class Api extends Cloudflare.Worker<Api>()(
       "ApnsDeliveryJobSigningSecret",
       { bytes: 32 },
     );
-    const apnsDeliveryJobSigningSecret = yield* Alchemy.Secret(
+    const apnsDeliveryJobSigningSecret = yield* Output.named(
+      randomApnsDeliveryJobSigningSecret.text,
       "APNS_DELIVERY_JOB_SIGNING_SECRET",
-      randomApnsDeliveryJobSigningSecret.text as any,
     );
-    const clerkSecretKey = yield* Alchemy.Secret("CLERK_SECRET_KEY");
-    const cloudMintPrivateKey = yield* Alchemy.Secret(
+    const clerkSecretKey = yield* Config.redacted("CLERK_SECRET_KEY");
+    const cloudMintPrivateKey = yield* Output.named(
+      cloudMintKeyPair.privateKey,
       "CLOUD_MINT_PRIVATE_KEY",
-      cloudMintKeyPair.privateKey as never,
     );
-    const cloudMintPublicKey = yield* Alchemy.Secret(
+    const cloudMintPublicKey = yield* Output.named(
+      Output.map(cloudMintKeyPair.publicKey, Redacted.make),
       "CLOUD_MINT_PUBLIC_KEY",
-      cloudMintKeyPair.publicKey as never,
     );
     const db = yield* Drizzle.postgres(hyperdrive.connectionString);
 
@@ -275,14 +271,14 @@ export default class Api extends Cloudflare.Worker<Api>()(
       const settings = Settings.Settings.of({
         relayIssuer: yield* relayIssuer,
         apns: {
-          environment: yield* environment,
-          teamId: yield* apnsTeamId,
-          keyId: yield* apnsKeyId,
-          bundleId: yield* apnsBundleId,
-          privateKey: yield* apnsPrivateKey,
+          environment,
+          teamId: apnsTeamId,
+          keyId: apnsKeyId,
+          bundleId: apnsBundleId,
+          privateKey: apnsPrivateKey,
         },
         apnsDeliveryJobSigningSecret: yield* apnsDeliveryJobSigningSecret,
-        clerkSecretKey: yield* clerkSecretKey,
+        clerkSecretKey,
         cloudMintPrivateKey: yield* cloudMintPrivateKey,
         cloudMintPublicKey: yield* cloudMintPublicKey,
         managedEndpointBaseDomain: yield* managedEndpointBaseDomainValue,
@@ -354,7 +350,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     yield* Cloudflare.messages<unknown>(apnsDeliveryQueue, {
       batchSize: 10,
       maxRetries: 5,
-      maxWaitTimeMs: 5_000,
+      maxWaitTime: "5 seconds",
       retryDelay: 30,
       deadLetterQueue: apnsDeliveryDeadLetterQueue.queueName as unknown as string,
     }).subscribe((stream) =>
