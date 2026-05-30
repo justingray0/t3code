@@ -27,12 +27,14 @@ describe("createEnvironmentRuntimeManager", () => {
       connectionState: "ready",
       connectionError: null,
       serverConfig: null,
+      reconnectAttempt: 0,
     });
 
     expect(manager.getSnapshot(TARGET)).toEqual({
       connectionState: "ready",
       connectionError: null,
       serverConfig: null,
+      reconnectAttempt: 0,
     });
   });
 
@@ -51,6 +53,7 @@ describe("createEnvironmentRuntimeManager", () => {
       connectionState: "disconnected",
       connectionError: "Socket closed.",
       serverConfig: null,
+      reconnectAttempt: 0,
     });
   });
 
@@ -63,6 +66,7 @@ describe("createEnvironmentRuntimeManager", () => {
       connectionState: "ready",
       connectionError: null,
       serverConfig: null,
+      reconnectAttempt: 0,
     });
     manager.invalidate(TARGET);
 
@@ -70,6 +74,7 @@ describe("createEnvironmentRuntimeManager", () => {
       connectionState: "idle",
       connectionError: null,
       serverConfig: null,
+      reconnectAttempt: 0,
     });
   });
 });

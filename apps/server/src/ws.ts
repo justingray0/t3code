@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -58,6 +59,7 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "./serverSettings.ts";
+import { deriveAuthClientMetadata } from "./auth/utils.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
@@ -1328,10 +1330,49 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             ),
           ),
         );
+        const clientMetadata = deriveAuthClientMetadata({ request });
+        const connectionAnnotations = {
+          "ws.session_id": session.sessionId,
+          "ws.subject": session.subject,
+          "ws.role": session.role,
+          "ws.client_ip": clientMetadata.ipAddress ?? "unknown",
+          "ws.client_user_agent": clientMetadata.userAgent ?? "unknown",
+          "ws.client_device": clientMetadata.deviceType,
+          ...(clientMetadata.os ? { "ws.client_os": clientMetadata.os } : {}),
+        } as const;
+        const connectedAt = yield* Clock.currentTimeMillis;
         return yield* Effect.acquireUseRelease(
-          sessions.markConnected(session.sessionId),
+          sessions.markConnected(session.sessionId).pipe(
+            Effect.tap(() =>
+              Effect.logInfo("websocket connection opened").pipe(
+                Effect.annotateLogs(connectionAnnotations),
+              ),
+            ),
+            Effect.withSpan("ws.connection.opened", { attributes: connectionAnnotations }),
+          ),
           () => rpcWebSocketHttpEffect,
-          () => sessions.markDisconnected(session.sessionId),
+          () =>
+            Clock.currentTimeMillis.pipe(
+              Effect.flatMap((closedAt) => {
+                const durationMs = closedAt - connectedAt;
+                return sessions.markDisconnected(session.sessionId).pipe(
+                  Effect.tap(() =>
+                    Effect.logInfo("websocket connection closed").pipe(
+                      Effect.annotateLogs({
+                        ...connectionAnnotations,
+                        "ws.duration_ms": durationMs,
+                      }),
+                    ),
+                  ),
+                  Effect.withSpan("ws.connection.closed", {
+                    attributes: {
+                      ...connectionAnnotations,
+                      "ws.duration_ms": durationMs,
+                    },
+                  }),
+                );
+              }),
+            ),
         );
       }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
     ),

@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo } from "react";
-import { Alert } from "react-native";
+import { Alert, AppState, type AppStateStatus } from "react-native";
 
 import {
   type EnvironmentRuntimeState,
@@ -9,9 +9,9 @@ import {
   createKnownEnvironment,
   createWsRpcClient,
   EnvironmentConnectionState,
-  WsTransport,
   resolveRemoteWebSocketConnectionUrl,
 } from "@t3tools/client-runtime";
+import { MobileWsTransport } from "../lib/wsTransport";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
@@ -234,7 +234,7 @@ export async function connectSavedEnvironment(
   setEnvironmentConnectionStatus(connection.environmentId, "connecting", null);
   shellSnapshotManager.markPending({ environmentId: connection.environmentId });
 
-  const transport = new WsTransport(
+  const transport = new MobileWsTransport(
     () =>
       mobileRemoteHttpRuntime.runPromise(
         resolveRemoteWebSocketConnectionUrl({
@@ -250,18 +250,29 @@ export async function connectSavedEnvironment(
         }
 
         environmentRuntimeManager.patch({ environmentId: connection.environmentId }, (previous) => {
-          const nextState =
-            previous.connectionState === "ready" || previous.connectionState === "reconnecting"
-              ? "reconnecting"
-              : "connecting";
+          const isReconnect =
+            previous.connectionState === "ready" ||
+            previous.connectionState === "reconnecting" ||
+            previous.connectionState === "disconnected";
+          const nextState = isReconnect ? "reconnecting" : "connecting";
           const keepSettledFailure =
             previous.connectionState === "disconnected" && previous.connectionError !== null;
           return {
             ...previous,
             connectionState: keepSettledFailure ? "disconnected" : nextState,
             connectionError: keepSettledFailure ? previous.connectionError : null,
+            reconnectAttempt: isReconnect ? previous.reconnectAttempt + 1 : 1,
           };
         });
+      },
+      onOpen: () => {
+        if (!isCurrentAttempt()) {
+          return;
+        }
+        environmentRuntimeManager.patch({ environmentId: connection.environmentId }, (previous) => ({
+          ...previous,
+          reconnectAttempt: 0,
+        }));
       },
       onError: (message) => {
         if (isCurrentAttempt()) {
@@ -394,15 +405,44 @@ function deriveConnectedEnvironments(
         displayUrl: connection.displayUrl,
         connectionState: runtime?.connectionState ?? "idle",
         connectionError: runtime?.connectionError ?? null,
+        reconnectAttempt: runtime?.reconnectAttempt ?? 0,
       };
     }),
     environmentsSortOrder,
   );
 }
 
+async function reconnectAllSavedEnvironments(reason: string): Promise<void> {
+  const connections = Object.values(getSavedConnectionsById());
+  if (connections.length === 0) {
+    return;
+  }
+  await Promise.all(
+    connections.map(async (connection) => {
+      try {
+        await connectSavedEnvironment(connection, { persist: false });
+      } catch (error) {
+        console.warn(
+          `Failed to reconnect environment ${connection.environmentLabel} on ${reason}`,
+          error,
+        );
+      }
+    }),
+  );
+}
+
 export function useRemoteEnvironmentBootstrap() {
   useEffect(() => {
     let cancelled = false;
+    let lastAppState: AppStateStatus = AppState.currentState;
+
+    const appStateSubscription = AppState.addEventListener("change", (nextState) => {
+      const previousState = lastAppState;
+      lastAppState = nextState;
+      if (nextState === "active" && previousState !== "active" && previousState !== "unknown") {
+        void reconnectAllSavedEnvironments("foreground");
+      }
+    });
 
     void loadSavedConnections()
       .then((connections) => {
@@ -449,6 +489,7 @@ export function useRemoteEnvironmentBootstrap() {
 
     return () => {
       cancelled = true;
+      appStateSubscription.remove();
       for (const session of drainEnvironmentSessions()) {
         void session.connection.dispose();
       }

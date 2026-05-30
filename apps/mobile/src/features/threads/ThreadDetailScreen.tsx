@@ -55,6 +55,7 @@ export interface ThreadDetailScreenProps {
   readonly draftMessage: string;
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly connectionStateLabel: "ready" | "connecting" | "reconnecting" | "disconnected" | "idle";
+  readonly connectionReconnectAttempt: number;
   readonly activeThreadBusy: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
@@ -165,19 +166,103 @@ function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedE
 
 const WORKING_INDICATOR_HEIGHT = 44;
 
+type ConnectionStateLabel = "ready" | "connecting" | "reconnecting" | "disconnected" | "idle";
+
+function describeConnectionBanner(
+  state: ConnectionStateLabel,
+  error: string | null,
+  attempt: number,
+): { readonly title: string; readonly detail: string | null } | null {
+  const attemptSuffix = attempt > 1 ? ` (attempt ${attempt})` : "";
+  switch (state) {
+    case "ready":
+      return null;
+    case "connecting":
+      return { title: `Connecting to remote server…${attemptSuffix}`, detail: null };
+    case "reconnecting":
+      return {
+        title: `Reconnecting to remote server…${attemptSuffix}`,
+        detail: "Activity may be paused until the connection recovers.",
+      };
+    case "disconnected":
+    case "idle": {
+      const detailParts = [
+        error ?? "Pull down to refresh or wait — the app will keep retrying in the background.",
+      ];
+      if (attempt > 0) {
+        detailParts.push(`Reconnect attempts: ${attempt}.`);
+      }
+      return {
+        title: "Disconnected from remote server",
+        detail: detailParts.join(" "),
+      };
+    }
+  }
+}
+
+const ConnectionStatusBanner = memo(function ConnectionStatusBanner(props: {
+  readonly state: ConnectionStateLabel;
+  readonly error: string | null;
+  readonly reconnectAttempt: number;
+}) {
+  const banner = describeConnectionBanner(props.state, props.error, props.reconnectAttempt);
+  if (!banner) {
+    return null;
+  }
+  const isError = props.state === "disconnected" || props.state === "idle";
+  const containerClass = isError
+    ? "self-stretch rounded-2xl border border-red-300/70 bg-red-50/95 px-3 py-2 dark:border-red-500/40 dark:bg-red-500/10"
+    : "self-stretch rounded-2xl border border-amber-300/70 bg-amber-50/95 px-3 py-2 dark:border-amber-500/40 dark:bg-amber-500/10";
+  const titleClass = isError
+    ? "font-t3-medium text-[13px] text-red-700 dark:text-red-200"
+    : "font-t3-medium text-[13px] text-amber-700 dark:text-amber-200";
+  const detailClass = isError
+    ? "text-[12px] text-red-700/80 dark:text-red-200/80"
+    : "text-[12px] text-amber-700/80 dark:text-amber-200/80";
+  return (
+    <View className="px-4 pb-2" style={{ flexShrink: 0 }}>
+      <View className={containerClass}>
+        <Text className={titleClass}>{banner.title}</Text>
+        {banner.detail ? <Text className={detailClass}>{banner.detail}</Text> : null}
+      </View>
+    </View>
+  );
+});
+
 const WorkingDurationPill = memo(function WorkingDurationPill(props: {
   readonly startedAt: string;
+  readonly connectionState: ConnectionStateLabel;
+  readonly reconnectAttempt: number;
 }) {
+  const isConnected = props.connectionState === "ready";
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
+    if (!isConnected) {
+      return;
+    }
+    setNowMs(Date.now());
     const intervalId = setInterval(() => {
       setNowMs(Date.now());
     }, 1_000);
     return () => clearInterval(intervalId);
-  }, [props.startedAt]);
+  }, [isConnected, props.startedAt]);
 
   const durationLabel = formatElapsed(props.startedAt, new Date(nowMs).toISOString()) ?? "0s";
+
+  if (!isConnected) {
+    const attemptSuffix =
+      props.reconnectAttempt > 0 ? ` · retry ${props.reconnectAttempt}` : "";
+    return (
+      <View className="px-4 pb-2" style={{ flexShrink: 0 }}>
+        <View className="self-start rounded-full border border-amber-300/70 bg-amber-50/90 px-3 py-2 dark:border-amber-500/40 dark:bg-amber-500/10">
+          <Text className="font-t3-medium text-xs text-amber-700 dark:text-amber-200">
+            Last seen working for {durationLabel} · paused (disconnected){attemptSuffix}
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View className="px-4 pb-2" style={{ flexShrink: 0 }}>
@@ -287,8 +372,17 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             offset={{ closed: 0, opened: 0 }}
           >
             <View onLayout={handleOverlayLayout}>
+              <ConnectionStatusBanner
+                state={props.connectionStateLabel}
+                error={props.connectionError}
+                reconnectAttempt={props.connectionReconnectAttempt}
+              />
               {props.activeWorkStartedAt ? (
-                <WorkingDurationPill startedAt={props.activeWorkStartedAt} />
+                <WorkingDurationPill
+                  startedAt={props.activeWorkStartedAt}
+                  connectionState={props.connectionStateLabel}
+                  reconnectAttempt={props.connectionReconnectAttempt}
+                />
               ) : null}
 
               {props.activePendingApproval || props.activePendingUserInput ? (

@@ -13,6 +13,7 @@ export interface ConnectedEnvironmentSummary {
   readonly displayUrl: string;
   readonly connectionState: EnvironmentConnectionState;
   readonly connectionError: string | null;
+  readonly reconnectAttempt: number;
 }
 
 export interface SelectedThreadRef {
