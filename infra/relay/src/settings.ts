@@ -6,10 +6,10 @@ export const ApnsEnvironment = Schema.Literals(["sandbox", "production"]);
 export type ApnsEnvironment = typeof ApnsEnvironment.Type;
 
 export interface ApnsCredentials {
-  readonly teamId: Redacted.Redacted<string>;
-  readonly keyId: Redacted.Redacted<string>;
+  readonly teamId: string;
+  readonly keyId: string;
   readonly privateKey: Redacted.Redacted<string>;
-  readonly bundleId: Redacted.Redacted<string>;
+  readonly bundleId: string;
   readonly environment: ApnsEnvironment;
 }
 
@@ -19,10 +19,10 @@ export interface SettingsShape {
   readonly clerkSecretKey: Redacted.Redacted<string>;
   readonly apnsDeliveryJobSigningSecret: Redacted.Redacted<string>;
   readonly cloudMintPrivateKey: Redacted.Redacted<string>;
-  readonly cloudMintPublicKey: Redacted.Redacted<string>;
+  readonly cloudMintPublicKey: string;
   readonly managedEndpointBaseDomain: string | undefined;
-  readonly cloudflareAccountId: Redacted.Redacted<string> | undefined;
-  readonly cloudflareZoneId: Redacted.Redacted<string> | undefined;
+  readonly cloudflareAccountId: string | undefined;
+  readonly cloudflareZoneId: string | undefined;
   readonly cloudflareApiToken: Redacted.Redacted<string> | undefined;
 }
 

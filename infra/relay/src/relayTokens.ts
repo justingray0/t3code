@@ -108,7 +108,7 @@ export function verifyLinkChallengeToken(input: {
 }) {
   const issuer = normalizeRelayIssuer(input.settings.relayIssuer);
   return verifyRelayJwt({
-    publicKey: Redacted.value(input.settings.cloudMintPublicKey),
+    publicKey: input.settings.cloudMintPublicKey,
     token: input.token,
     typ: LINK_CHALLENGE_TYP,
     issuer,
@@ -166,7 +166,7 @@ export function verifyDpopAccessToken(input: {
 }) {
   const issuer = normalizeRelayIssuer(input.settings.relayIssuer);
   return verifyRelayJwt({
-    publicKey: Redacted.value(input.settings.cloudMintPublicKey),
+    publicKey: input.settings.cloudMintPublicKey,
     token: input.token,
     typ: ACCESS_TOKEN_TYP,
     issuer,

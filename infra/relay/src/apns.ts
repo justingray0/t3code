@@ -73,12 +73,10 @@ function makeApnsJwt(input: {
 }): Effect.Effect<string, ApnsSigningError> {
   return Effect.try({
     try: () => {
-      const keyId = Redacted.value(input.keyId);
-      const teamId = Redacted.value(input.teamId);
       const privateKey = Redacted.value(input.privateKey);
-      const header = Encoding.encodeBase64Url(JSON.stringify({ alg: "ES256", kid: keyId }));
+      const header = Encoding.encodeBase64Url(JSON.stringify({ alg: "ES256", kid: input.keyId }));
       const payload = Encoding.encodeBase64Url(
-        JSON.stringify({ iss: teamId, iat: input.issuedAtUnixSeconds }),
+        JSON.stringify({ iss: input.teamId, iat: input.issuedAtUnixSeconds }),
       );
       const signingInput = `${header}.${payload}`;
       const signature = NodeCrypto.createSign("sha256")
@@ -215,7 +213,7 @@ export function sendLiveActivityRequest(input: {
         authorization: `bearer ${jwt}`,
         "apns-priority": input.request.priority,
         "apns-push-type": "liveactivity",
-        "apns-topic": `${Redacted.value(input.credentials.bundleId)}.push-type.liveactivity`,
+        "apns-topic": `${input.credentials.bundleId}.push-type.liveactivity`,
       }),
       HttpClientRequest.bodyJson(input.request.payload),
       Effect.flatMap(httpClient.execute),
@@ -254,7 +252,7 @@ export function sendPushNotificationRequest(input: {
         authorization: `bearer ${jwt}`,
         "apns-priority": input.request.priority,
         "apns-push-type": "alert",
-        "apns-topic": Redacted.value(input.credentials.bundleId),
+        "apns-topic": input.credentials.bundleId,
       }),
       HttpClientRequest.bodyJson(input.request.payload),
       Effect.flatMap(httpClient.execute),

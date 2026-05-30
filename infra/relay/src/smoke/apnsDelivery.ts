@@ -104,9 +104,9 @@ const readCredentials = Effect.gen(function* () {
   ]);
   return {
     environment,
-    teamId: Redacted.make(teamId),
-    keyId: Redacted.make(keyId),
-    bundleId: Redacted.make(bundleId),
+    teamId,
+    keyId,
+    bundleId,
     privateKey: Redacted.make(privateKey),
   } satisfies ApnsCredentials;
 });

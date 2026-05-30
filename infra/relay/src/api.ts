@@ -58,7 +58,6 @@ import * as EnvironmentCredentials from "./persistence/EnvironmentCredentials.ts
 import * as EnvironmentLinks from "./persistence/EnvironmentLinks.ts";
 import * as LiveActivities from "./persistence/LiveActivities.ts";
 import * as Settings from "./settings.ts";
-import { increment, relayEnvironmentLinksTotal } from "./observability/Metrics.ts";
 import * as AgentActivityPublisher from "./services/AgentActivityPublisher.ts";
 import * as EnvironmentConnector from "./services/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "./services/EnvironmentLinker.ts";
@@ -377,7 +376,7 @@ export const clientApi = HttpApiBuilder.group(RelayApi, "client", (handlers) =>
               endpointRuntime: result.endpointRuntime,
               relayIssuer: settings.relayIssuer,
               environmentCredential: result.environmentCredential,
-              cloudMintPublicKey: Redacted.value(settings.cloudMintPublicKey),
+              cloudMintPublicKey: settings.cloudMintPublicKey,
             };
           },
           mapRelayCommonApiErrors("not_authorized"),
@@ -472,10 +471,6 @@ export const clientApi = HttpApiBuilder.group(RelayApi, "client", (handlers) =>
             environmentId: params.environmentId,
           });
           if (unlinked) {
-            yield* increment(relayEnvironmentLinksTotal, {
-              operation: "unlink",
-              endpointProviderKind: link.endpoint.providerKind,
-            });
             yield* credentials.revokeForEnvironmentPublicKey({
               environmentId: link.environmentId,
               environmentPublicKey: link.environmentPublicKey,

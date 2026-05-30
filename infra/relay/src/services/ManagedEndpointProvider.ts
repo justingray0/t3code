@@ -15,7 +15,6 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
-import { increment, relayManagedTunnelProvisionsTotal } from "../observability/Metrics.ts";
 import * as Settings from "../settings.ts";
 
 export class ManagedEndpointProvisioningNotConfigured extends Data.TaggedError(
@@ -104,8 +103,8 @@ function requireCloudflareSettings(settings: Settings.SettingsShape) {
       return yield* new ManagedEndpointProvisioningNotConfigured();
     }
     return {
-      accountId: Redacted.value(settings.cloudflareAccountId),
-      zoneId: Redacted.value(settings.cloudflareZoneId),
+      accountId: settings.cloudflareAccountId,
+      zoneId: settings.cloudflareZoneId,
       apiToken: Redacted.value(settings.cloudflareApiToken),
       baseDomain: settings.managedEndpointBaseDomain,
     };
@@ -258,7 +257,6 @@ const make = Effect.gen(function* () {
         apiToken: cf.apiToken,
       }).pipe(Effect.flatMap((request) => executeJson(request, CloudflareTunnelListResponse)));
       const existingTunnel = existingTunnels.result.find((tunnel) => tunnel.name === tunnelName);
-      const tunnelProvisionKind = existingTunnel ? "reused" : "created";
       const tunnel =
         existingTunnel ??
         (yield* cloudflareRequest({
@@ -325,11 +323,6 @@ const make = Effect.gen(function* () {
         url: `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/cfd_tunnel/${tunnel.id}/token`,
         apiToken: cf.apiToken,
       }).pipe(Effect.flatMap((request) => executeJson(request, CloudflareTunnelTokenResponse)));
-
-      yield* increment(relayManagedTunnelProvisionsTotal, {
-        outcome: "success",
-        tunnelProvisionKind,
-      });
 
       return {
         endpoint: {

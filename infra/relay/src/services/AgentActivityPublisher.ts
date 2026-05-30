@@ -10,11 +10,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { sanitizeAgentActivityAggregateState } from "../agentActivityPayloads.ts";
-import {
-  increment,
-  relayAgentActivityPublishesTotal,
-  relayApnsDeliveriesTotal,
-} from "../observability/Metrics.ts";
 import * as AgentActivityRows from "../persistence/AgentActivityRows.ts";
 import * as EnvironmentLinks from "../persistence/EnvironmentLinks.ts";
 import * as LiveActivities from "../persistence/LiveActivities.ts";
@@ -64,10 +59,6 @@ const make = Effect.gen(function* () {
       const targets = yield* liveActivities.listTargets({ userId: input.userId });
       const target = targets.find((row) => row.device_id === input.deviceId) ?? null;
       if (target === null) {
-        yield* increment(relayAgentActivityPublishesTotal, {
-          operation: "replay",
-          outcome: "no_target",
-        });
         return null;
       }
       const aggregate = makeAggregateState({ activeStates, terminalState: null });
@@ -149,15 +140,6 @@ const make = Effect.gen(function* () {
         { concurrency: 4 },
       );
       const deliveries = deliveriesByUser.flat();
-      yield* increment(relayAgentActivityPublishesTotal, {
-        operation: "publish",
-        phase: input.state?.phase ?? "deleted",
-      });
-      yield* increment(
-        relayApnsDeliveriesTotal,
-        { operation: "selected", source: "agent_activity_publish" },
-        deliveries.filter((delivery) => delivery !== null).length,
-      );
       return {
         ok: true,
         deliveries: deliveries.filter(

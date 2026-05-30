@@ -22,7 +22,6 @@ import {
   sanitizeApnsNotificationPayload,
 } from "../agentActivityPayloads.ts";
 import * as Apns from "../apns.ts";
-import { increment, relayApnsDeliveriesTotal } from "../observability/Metrics.ts";
 import {
   ApnsDeliveryJobInvalid,
   type ApnsNotificationPayload,
@@ -455,11 +454,6 @@ const make = Effect.gen(function* () {
           token: input.token,
         });
         if (claim === "completed") {
-          yield* increment(relayApnsDeliveriesTotal, {
-            operation: "send",
-            kind: input.kind,
-            outcome: "duplicate",
-          });
           return duplicateJobResult({ deviceId: input.target.device_id, kind: input.kind });
         }
         if (claim === "in_flight") {
@@ -474,11 +468,6 @@ const make = Effect.gen(function* () {
           yield* attempts.completeSourceJob({
             sourceJobId: input.sourceJobId,
             apnsReason: "Stale APNs delivery job skipped.",
-          });
-          yield* increment(relayApnsDeliveriesTotal, {
-            operation: "send",
-            kind: input.kind,
-            outcome: "stale",
           });
           return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
         }
@@ -535,13 +524,6 @@ const make = Effect.gen(function* () {
           ...deliveryAttemptOutcome(result),
         });
       }
-      yield* increment(relayApnsDeliveriesTotal, {
-        operation: "send",
-        kind: input.kind,
-        outcome: result.ok ? "success" : "failure",
-        apnsStatus: result.status === 0 ? "transport_error" : result.status,
-        permanentTokenFailure: isPermanentApnsTokenFailure(result),
-      });
       return {
         deviceId: input.target.device_id,
         kind: input.kind,
@@ -572,11 +554,6 @@ const make = Effect.gen(function* () {
           token: input.token,
         });
         if (claim === "completed") {
-          yield* increment(relayApnsDeliveriesTotal, {
-            operation: "send",
-            kind: "push_notification",
-            outcome: "duplicate",
-          });
           return duplicateJobResult({
             deviceId: input.target.device_id,
             kind: "push_notification",
@@ -594,11 +571,6 @@ const make = Effect.gen(function* () {
           yield* attempts.completeSourceJob({
             sourceJobId: input.sourceJobId,
             apnsReason: "Stale APNs delivery job skipped.",
-          });
-          yield* increment(relayApnsDeliveriesTotal, {
-            operation: "send",
-            kind: "push_notification",
-            outcome: "stale",
           });
           return staleJobResult({
             deviceId: input.target.device_id,
@@ -645,13 +617,6 @@ const make = Effect.gen(function* () {
           ...deliveryAttemptOutcome(result),
         });
       }
-      yield* increment(relayApnsDeliveriesTotal, {
-        operation: "send",
-        kind: "push_notification",
-        outcome: result.ok ? "success" : "failure",
-        apnsStatus: result.status === 0 ? "transport_error" : result.status,
-        permanentTokenFailure: isPermanentApnsTokenFailure(result),
-      });
       return {
         deviceId: input.target.device_id,
         kind: "push_notification",
@@ -736,18 +701,11 @@ const make = Effect.gen(function* () {
       const notification = notificationForAggregate(input);
       const token = input.target.push_token;
       return notification && token
-        ? Effect.gen(function* () {
-            const result = yield* deliveryQueue.enqueuePushNotification({
-              userId: input.target.user_id,
-              deviceId: input.target.device_id,
-              token,
-              notification,
-            });
-            yield* increment(relayApnsDeliveriesTotal, {
-              operation: "enqueue",
-              kind: "push_notification",
-            });
-            return result;
+        ? deliveryQueue.enqueuePushNotification({
+            userId: input.target.user_id,
+            deviceId: input.target.device_id,
+            token,
+            notification,
           })
         : Effect.succeed(null);
     },
@@ -768,10 +726,6 @@ const make = Effect.gen(function* () {
             token: delivery.token,
             notification: delivery.notification,
           });
-          yield* increment(relayApnsDeliveriesTotal, {
-            operation: "enqueue",
-            kind: "push_notification",
-          });
           return result;
         }
         const result = yield* deliveryQueue.enqueueLiveActivity({
@@ -780,10 +734,6 @@ const make = Effect.gen(function* () {
           kind: delivery.kind,
           token: delivery.token,
           aggregate: delivery.aggregate,
-        });
-        yield* increment(relayApnsDeliveriesTotal, {
-          operation: "enqueue",
-          kind: delivery.kind,
         });
         const notification = notificationForAggregate({
           target: input.target,
@@ -795,11 +745,6 @@ const make = Effect.gen(function* () {
             deviceId: input.target.device_id,
             token: input.target.push_token,
             notification,
-          });
-          yield* increment(relayApnsDeliveriesTotal, {
-            operation: "enqueue",
-            kind: "push_notification",
-            source: "live_activity_end",
           });
         }
         if (delivery.kind === "live_activity_start") {

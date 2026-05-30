@@ -11,8 +11,6 @@ import { FetchHttpClient } from "effect/unstable/http";
 import * as Etag from "effect/unstable/http/Etag";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as OtlpLogger from "effect/unstable/observability/OtlpLogger";
-import * as OtlpMetrics from "effect/unstable/observability/OtlpMetrics";
 import * as OtlpSerialization from "effect/unstable/observability/OtlpSerialization";
 import * as OtlpTracer from "effect/unstable/observability/OtlpTracer";
 
@@ -45,7 +43,6 @@ import {
   RELAY_OBSERVABILITY_SERVICE_NAME,
   provisionRelayObservability,
 } from "./infra/RelayObservability.ts";
-import { recordRelayProductStateMetrics } from "./observability/ProductMetrics.ts";
 import * as DeliveryAttempts from "./persistence/DeliveryAttempts.ts";
 import * as AgentActivityRows from "./persistence/AgentActivityRows.ts";
 import * as Devices from "./persistence/Devices.ts";
@@ -79,60 +76,31 @@ const relayApiLayer = Layer.mergeAll(
 const makeAxiomHeaders = (input: {
   readonly token: Redacted.Redacted<string>;
   readonly dataset: string;
-  readonly datasetHeader?: "X-Axiom-Dataset" | "X-Axiom-Metrics-Dataset";
 }) => ({
   Authorization: `Bearer ${Redacted.value(input.token)}`,
-  [input.datasetHeader ?? "X-Axiom-Dataset"]: input.dataset,
+  "X-Axiom-Dataset": input.dataset,
 });
 
-const makeRelayTelemetryLayer = (input: {
-  readonly logsEndpoint: string;
+const makeRelayTraceLayer = (input: {
   readonly tracesEndpoint: string;
-  readonly metricsEndpoint: string;
   readonly eventsDatasetName: string;
-  readonly metricsDatasetName: string;
   readonly ingestToken: Redacted.Redacted<string>;
-}) => {
-  const resource = {
-    serviceName: RELAY_OBSERVABILITY_SERVICE_NAME,
-    attributes: {
-      "service.runtime": "cloudflare-worker",
-      "service.component": "relay",
+}) =>
+  OtlpTracer.layer({
+    url: input.tracesEndpoint,
+    resource: {
+      serviceName: RELAY_OBSERVABILITY_SERVICE_NAME,
+      attributes: {
+        "service.runtime": "cloudflare-worker",
+        "service.component": "relay",
+      },
     },
-  };
-
-  return Layer.mergeAll(
-    OtlpTracer.layer({
-      url: input.tracesEndpoint,
-      resource,
-      headers: makeAxiomHeaders({
-        token: input.ingestToken,
-        dataset: input.eventsDatasetName,
-      }),
-      exportInterval: RELAY_OBSERVABILITY_EXPORT_INTERVAL,
+    headers: makeAxiomHeaders({
+      token: input.ingestToken,
+      dataset: input.eventsDatasetName,
     }),
-    OtlpMetrics.layer({
-      url: input.metricsEndpoint,
-      resource,
-      headers: makeAxiomHeaders({
-        token: input.ingestToken,
-        dataset: input.metricsDatasetName,
-        datasetHeader: "X-Axiom-Metrics-Dataset",
-      }),
-      exportInterval: RELAY_OBSERVABILITY_EXPORT_INTERVAL,
-    }),
-    OtlpLogger.layer({
-      url: input.logsEndpoint,
-      resource,
-      headers: makeAxiomHeaders({
-        token: input.ingestToken,
-        dataset: input.eventsDatasetName,
-      }),
-      exportInterval: RELAY_OBSERVABILITY_EXPORT_INTERVAL,
-      mergeWithExisting: true,
-    }),
-  ).pipe(Layer.provide(OtlpSerialization.layerJson), Layer.provide(FetchHttpClient.layer));
-};
+    exportInterval: RELAY_OBSERVABILITY_EXPORT_INTERVAL,
+  }).pipe(Layer.provide(OtlpSerialization.layerJson), Layer.provide(FetchHttpClient.layer));
 
 export default class Api extends Cloudflare.Worker<Api>()(
   "Api",
@@ -141,19 +109,6 @@ export default class Api extends Cloudflare.Worker<Api>()(
     compatibility: {
       date: "2026-05-22",
       flags: ["nodejs_compat"],
-    },
-    observability: {
-      enabled: true,
-      logs: {
-        enabled: true,
-        invocationLogs: true,
-        persist: true,
-      },
-      traces: {
-        enabled: true,
-        headSamplingRate: 1,
-        persist: true,
-      },
     },
   },
   Effect.gen(function* () {
@@ -172,31 +127,18 @@ export default class Api extends Cloudflare.Worker<Api>()(
         ),
       },
     );
-    const relayIssuer = yield* Output.named(
-      Output.map(managedEndpointZone.name, (name) => relayPublicOrigin({ name })),
-      "RELAY_ISSUER",
+    const relayIssuer = yield* Output.map(managedEndpointZone.name, (name) =>
+      relayPublicOrigin({ name }),
     );
-    const managedEndpointBaseDomainValue = yield* Output.named(
-      Output.map(managedEndpointZone.name, (name) =>
-        managedEndpointBaseDomain({
-          name,
-          baseSubdomain: MANAGED_ENDPOINT_ZONE.baseSubdomain,
-        }),
-      ),
-      "MANAGED_ENDPOINT_BASE_DOMAIN",
+    const managedEndpointBaseDomainValue = yield* Output.map(managedEndpointZone.name, (name) =>
+      managedEndpointBaseDomain({
+        name,
+        baseSubdomain: MANAGED_ENDPOINT_ZONE.baseSubdomain,
+      }),
     );
-    const managedEndpointCloudflareAccountId = yield* Output.named(
-      Output.map(managedEndpointZone.accountId, Redacted.make),
-      "MANAGED_ENDPOINT_CLOUDFLARE_ACCOUNT_ID",
-    );
-    const managedEndpointCloudflareZoneId = yield* Output.named(
-      Output.map(managedEndpointZone.zoneId, Redacted.make),
-      "MANAGED_ENDPOINT_CLOUDFLARE_ZONE_ID",
-    );
-    const managedEndpointCloudflareApiToken = yield* Output.named(
-      managedEndpointProvisionerToken.value,
-      "MANAGED_ENDPOINT_CLOUDFLARE_API_TOKEN",
-    );
+    const managedEndpointCloudflareAccountId = yield* managedEndpointZone.accountId;
+    const managedEndpointCloudflareZoneId = yield* managedEndpointZone.zoneId;
+    const managedEndpointCloudflareApiToken = yield* managedEndpointProvisionerToken.value;
     const relayHyperdrive = yield* RelayHyperdrive;
     const apnsDeliveryQueue = yield* RelayApnsDeliveryQueue;
     const apnsDeliveryDeadLetterQueue = yield* RelayApnsDeliveryDeadLetterQueue;
@@ -206,93 +148,51 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const environment = yield* Config.schema(Settings.ApnsEnvironment, "APNS_ENVIRONMENT").pipe(
       Config.withDefault("sandbox"),
     );
-    const apnsTeamId = yield* Config.redacted("APNS_TEAM_ID");
-    const apnsKeyId = yield* Config.redacted("APNS_KEY_ID");
-    const apnsBundleId = yield* Config.redacted("APNS_BUNDLE_ID");
+    const apnsTeamId = yield* Config.string("APNS_TEAM_ID");
+    const apnsKeyId = yield* Config.string("APNS_KEY_ID");
+    const apnsBundleId = yield* Config.string("APNS_BUNDLE_ID");
     const apnsPrivateKey = yield* Config.redacted("APNS_PRIVATE_KEY");
     const relayObservability = yield* provisionRelayObservability;
-    const axiomIngestToken = yield* Output.named(
-      relayObservability.ingestToken.token,
-      "AXIOM_INGEST_TOKEN",
-    );
-    const axiomLogsEndpoint = yield* Output.named(
-      relayObservability.events.otelLogsEndpoint,
-      "AXIOM_OTEL_LOGS_ENDPOINT",
-    );
-    const axiomTracesEndpoint = yield* Output.named(
-      relayObservability.events.otelTracesEndpoint,
-      "AXIOM_OTEL_TRACES_ENDPOINT",
-    );
-    const axiomMetricsEndpoint = yield* Output.named(
-      relayObservability.metrics.otelMetricsEndpoint,
-      "AXIOM_OTEL_METRICS_ENDPOINT",
-    );
-    const axiomEventsDatasetName = yield* Output.named(
-      relayObservability.events.name,
-      "AXIOM_EVENTS_DATASET",
-    );
-    const axiomMetricsDatasetName = yield* Output.named(
-      relayObservability.metrics.name,
-      "AXIOM_METRICS_DATASET",
-    );
-    const relayTelemetryLayer = Layer.unwrap(
-      Effect.gen(function* () {
-        return makeRelayTelemetryLayer({
-          logsEndpoint: yield* axiomLogsEndpoint,
-          tracesEndpoint: yield* axiomTracesEndpoint,
-          metricsEndpoint: yield* axiomMetricsEndpoint,
-          eventsDatasetName: yield* axiomEventsDatasetName,
-          metricsDatasetName: yield* axiomMetricsDatasetName,
-          ingestToken: yield* axiomIngestToken,
-        });
-      }),
-    );
+    const axiomIngestToken = yield* relayObservability.ingestToken.token;
+    const axiomTracesEndpoint = yield* relayObservability.events.otelTracesEndpoint;
+    const axiomEventsDatasetName = yield* relayObservability.events.name;
+    const relayTraceLayer = Effect.all({
+      tracesEndpoint: axiomTracesEndpoint,
+      eventsDatasetName: axiomEventsDatasetName,
+      ingestToken: axiomIngestToken,
+    }).pipe(Effect.map(makeRelayTraceLayer), Layer.unwrap);
     const randomApnsDeliveryJobSigningSecret = yield* Alchemy.Random(
       "ApnsDeliveryJobSigningSecret",
       { bytes: 32 },
     );
-    const apnsDeliveryJobSigningSecret = yield* Output.named(
-      randomApnsDeliveryJobSigningSecret.text,
-      "APNS_DELIVERY_JOB_SIGNING_SECRET",
-    );
+    const apnsDeliveryJobSigningSecret = yield* randomApnsDeliveryJobSigningSecret.text;
     const clerkSecretKey = yield* Config.redacted("CLERK_SECRET_KEY");
-    const cloudMintPrivateKey = yield* Output.named(
-      cloudMintKeyPair.privateKey,
-      "CLOUD_MINT_PRIVATE_KEY",
-    );
-    const cloudMintPublicKey = yield* Output.named(
-      Output.map(cloudMintKeyPair.publicKey, Redacted.make),
-      "CLOUD_MINT_PUBLIC_KEY",
-    );
+    const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
+    const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
     const db = yield* Drizzle.postgres(hyperdrive.connectionString);
 
-    const loadSettings = Effect.fn("relay.worker.settings")(function* () {
-      const startedAt = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
-      const settings = Settings.Settings.of({
-        relayIssuer: yield* relayIssuer,
-        apns: {
-          environment,
-          teamId: apnsTeamId,
-          keyId: apnsKeyId,
-          bundleId: apnsBundleId,
-          privateKey: apnsPrivateKey,
-        },
-        apnsDeliveryJobSigningSecret: yield* apnsDeliveryJobSigningSecret,
-        clerkSecretKey,
-        cloudMintPrivateKey: yield* cloudMintPrivateKey,
-        cloudMintPublicKey: yield* cloudMintPublicKey,
-        managedEndpointBaseDomain: yield* managedEndpointBaseDomainValue,
-        cloudflareAccountId: yield* managedEndpointCloudflareAccountId,
-        cloudflareZoneId: yield* managedEndpointCloudflareZoneId,
-        cloudflareApiToken: yield* managedEndpointCloudflareApiToken,
-      });
-      const completedAt = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
-      yield* Effect.logInfo("relay worker settings loaded", {
-        durationMs: completedAt - startedAt,
-      });
-      return settings;
-    });
-    const getSettings = yield* Effect.cached(loadSettings());
+    const getSettings = yield* Effect.cached(
+      Effect.gen(function* () {
+        return Settings.Settings.of({
+          relayIssuer: yield* relayIssuer,
+          apns: {
+            environment,
+            teamId: apnsTeamId,
+            keyId: apnsKeyId,
+            bundleId: apnsBundleId,
+            privateKey: apnsPrivateKey,
+          },
+          apnsDeliveryJobSigningSecret: yield* apnsDeliveryJobSigningSecret,
+          clerkSecretKey,
+          cloudMintPrivateKey: yield* cloudMintPrivateKey,
+          cloudMintPublicKey: yield* cloudMintPublicKey,
+          managedEndpointBaseDomain: yield* managedEndpointBaseDomainValue,
+          cloudflareAccountId: yield* managedEndpointCloudflareAccountId,
+          cloudflareZoneId: yield* managedEndpointCloudflareZoneId,
+          cloudflareApiToken: yield* managedEndpointCloudflareApiToken,
+        });
+      }),
+    );
 
     const makeRuntimeLayer = (settings: Settings.SettingsShape) =>
       Layer.mergeAll(
@@ -304,7 +204,6 @@ export default class Api extends Cloudflare.Worker<Api>()(
         ),
         EnvironmentPublishSignatures.layer.pipe(Layer.provideMerge(DpopProofs.layer)),
         DpopProofs.layer,
-        relayTelemetryLayer,
       ).pipe(
         Layer.provide(ApnsDeliveries.layer),
         Layer.provide(ApnsDeliveryQueue.layer),
@@ -357,53 +256,31 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Stream.runForEach(stream, (message) =>
         Effect.gen(function* () {
           const settings = yield* getSettings;
-          const result = yield* Effect.gen(function* () {
+          yield* Effect.gen(function* () {
             const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
             return yield* deliveries.processSignedJob(message.body);
           }).pipe(Effect.provide(makeRuntimeLayer(settings)));
-          yield* Effect.logInfo("apns delivery queue job processed", {
-            deviceId: result.deviceId,
-            kind: result.kind,
-            ok: result.ok,
-            apnsStatus: result.apnsStatus,
-            apnsReason: result.apnsReason,
-          });
-        }).pipe(
-          Effect.tapError((cause) =>
-            Effect.logWarning("apns delivery queue job failed", { cause }),
-          ),
-          Effect.provide(relayTelemetryLayer),
-        ),
+        }),
       ),
     );
 
-    yield* Cloudflare.cron("*/5 * * * *").subscribe(() =>
-      Effect.gen(function* () {
+    yield* Cloudflare.cron("*/5 * * * *").subscribe(
+      Effect.fnUntraced(function* () {
         yield* DpopProofs.pruneExpired(db);
-        yield* recordRelayProductStateMetrics(db);
-        yield* Effect.logInfo("relay product metric snapshot recorded");
-      }).pipe(Effect.provide(relayTelemetryLayer)),
+      }),
     );
 
-    // HttpApiBuilder captures its construction context for route handlers, so a
-    // traced build would become the parent of subsequent request handler spans.
     const buildFetch = Effect.fnUntraced(function* () {
-      const startedAt = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
       const settings = yield* getSettings;
       const handler = yield* HttpApiBuilder.layer(RelayApi).pipe(
         Layer.provide(makeAppLayer(settings)),
-        Layer.provide(relayTelemetryLayer),
         Layer.provide([Etag.layerWeak, RelayHttpPlatformLayer, relayCors]),
         HttpRouter.toHttpEffect,
       );
       const tracer = yield* Effect.tracer;
-      const completedAt = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
-      yield* Effect.logInfo("relay worker http handler built", {
-        durationMs: completedAt - startedAt,
-      });
       return { handler: traceRelayHttpRequest(handler, tracer) };
     });
-    const getFetch = yield* Effect.cached(buildFetch().pipe(Effect.provide(relayTelemetryLayer)));
+    const getFetch = yield* Effect.cached(buildFetch().pipe(Effect.provide(relayTraceLayer)));
     const fetch = getFetch.pipe(Effect.map(({ handler }) => handler));
 
     return { fetch };

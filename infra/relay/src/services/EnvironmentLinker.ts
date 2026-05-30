@@ -19,12 +19,6 @@ import * as Schema from "effect/Schema";
 import * as DpopProofs from "../persistence/DpopProofs.ts";
 import * as EnvironmentCredentials from "../persistence/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../persistence/EnvironmentLinks.ts";
-import {
-  errorMetricTag,
-  increment,
-  relayEnvironmentLinksTotal,
-  relayManagedTunnelProvisionsTotal,
-} from "../observability/Metrics.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 import * as Settings from "../settings.ts";
 import { verifyLinkChallengeToken } from "../relayTokens.ts";
@@ -239,16 +233,10 @@ const make = Effect.gen(function* () {
         });
       }
       const provisioned = input.request.managedTunnelsEnabled
-        ? yield* managedEndpointProvider
-            .provision({ environmentId: verified.environmentId, origin: verified.origin })
-            .pipe(
-              Effect.tapError((error) =>
-                increment(relayManagedTunnelProvisionsTotal, {
-                  outcome: "failure",
-                  errorTag: errorMetricTag(error),
-                }),
-              ),
-            )
+        ? yield* managedEndpointProvider.provision({
+            environmentId: verified.environmentId,
+            origin: verified.origin,
+          })
         : null;
       const endpoint = provisioned?.endpoint ?? verified.endpoint;
       if (!isSecureManagedEndpoint(endpoint)) {
@@ -258,11 +246,6 @@ const make = Effect.gen(function* () {
         });
       }
       yield* links.upsert({ ...input, proof: verified, endpoint });
-      yield* increment(relayEnvironmentLinksTotal, {
-        operation: "link",
-        managedTunnelsEnabled: input.request.managedTunnelsEnabled,
-        endpointProviderKind: endpoint.providerKind,
-      });
       const environmentCredential = yield* credentials.create({
         environmentId: verified.environmentId,
         environmentPublicKey: verified.environmentPublicKey,
