@@ -1,5 +1,4 @@
 import {
-  AuthAccessManageScope,
   AuthAccessTokenType,
   AuthAdministrativeScopes,
   AuthStandardClientScopes,
@@ -229,9 +228,7 @@ export const makeServerAuth = Effect.gen(function* () {
     authControlPlane
       .createPairingLink({
         scopes: input?.scopes ?? AuthStandardClientScopes,
-        subject: input?.scopes?.includes(AuthAccessManageScope)
-          ? "administrative-bootstrap"
-          : "one-time-token",
+        subject: "one-time-token",
         ...(input?.label ? { label: input.label } : {}),
       })
       .pipe(
@@ -329,15 +326,27 @@ export const makeServerAuth = Effect.gen(function* () {
     );
 
   const issueStartupPairingUrl: ServerAuthShape["issueStartupPairingUrl"] = (baseUrl) =>
-    issuePairingCredential({ scopes: AuthAdministrativeScopes }).pipe(
-      Effect.map((issued) => {
-        const url = new URL(baseUrl);
-        url.pathname = "/pair";
-        url.searchParams.delete("token");
-        url.hash = new URLSearchParams([["token", issued.credential]]).toString();
-        return url.toString();
-      }),
-    );
+    authControlPlane
+      .createPairingLink({
+        scopes: AuthAdministrativeScopes,
+        subject: "administrative-bootstrap",
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerAuthInternalError({
+              message: "Failed to issue startup pairing credential.",
+              cause,
+            }),
+        ),
+        Effect.map((issued) => {
+          const url = new URL(baseUrl);
+          url.pathname = "/pair";
+          url.searchParams.delete("token");
+          url.hash = new URLSearchParams([["token", issued.credential]]).toString();
+          return url.toString();
+        }),
+      );
 
   const issueWebSocketTicket: ServerAuthShape["issueWebSocketTicket"] = (session) =>
     sessions.issueWebSocketToken(session.sessionId).pipe(
