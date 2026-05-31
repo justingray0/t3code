@@ -100,8 +100,11 @@ const make = Effect.gen(function* () {
   const db = yield* RelayDb;
 
   return LiveActivities.of({
-    register: (input) =>
-      Effect.gen(function* () {
+    register: Effect.fn("relay.live_activities.register")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({
+          "relay.mobile.device_id": input.registration.deviceId,
+        });
         const updatedAt = DateTime.formatIso(yield* DateTime.now);
         const registration = input.registration;
 
@@ -142,10 +145,12 @@ const make = Effect.gen(function* () {
               updatedAt,
             },
           });
-      }).pipe(Effect.mapError((cause) => new LiveActivityRegistrationPersistenceError({ cause }))),
+      },
+      Effect.mapError((cause) => new LiveActivityRegistrationPersistenceError({ cause })),
+    ),
 
-    listTargets: (input) =>
-      db
+    listTargets: Effect.fn("relay.live_activities.list_targets")(function* (input) {
+      return yield* db
         .select({
           device_id: relayMobileDevices.deviceId,
           user_id: relayMobileDevices.userId,
@@ -193,10 +198,15 @@ const make = Effect.gen(function* () {
           ),
           Effect.map((rows): ReadonlyArray<TargetRow> => rows),
           Effect.mapError((cause) => new LiveActivityTargetListPersistenceError({ cause })),
-        ),
+        );
+    }),
 
-    markDelivery: (input) =>
-      Effect.gen(function* () {
+    markDelivery: Effect.fn("relay.live_activities.mark_delivery")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({
+          "relay.mobile.device_id": input.deviceId,
+          "relay.delivery.kind": input.kind,
+        });
         const aggregateJson =
           input.aggregate === null
             ? null
@@ -236,10 +246,13 @@ const make = Effect.gen(function* () {
               updatedAt: input.deliveredAt,
             },
           });
-      }).pipe(Effect.mapError((cause) => new LiveActivityDeliveryMarkPersistenceError({ cause }))),
+      },
+      Effect.mapError((cause) => new LiveActivityDeliveryMarkPersistenceError({ cause })),
+    ),
 
-    markStartQueued: (input) =>
-      db
+    markStartQueued: Effect.fn("relay.live_activities.mark_start_queued")(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.mobile.device_id": input.deviceId });
+      yield* db
         .insert(relayLiveActivities)
         .values({
           userId: input.userId,
@@ -261,10 +274,12 @@ const make = Effect.gen(function* () {
             updatedAt: input.queuedAt,
           },
         })
-        .pipe(Effect.mapError((cause) => new LiveActivityDeliveryMarkPersistenceError({ cause }))),
+        .pipe(Effect.mapError((cause) => new LiveActivityDeliveryMarkPersistenceError({ cause })));
+    }),
 
-    clearStartQueued: (input) =>
-      db
+    clearStartQueued: Effect.fn("relay.live_activities.clear_start_queued")(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.mobile.device_id": input.deviceId });
+      yield* db
         .update(relayLiveActivities)
         .set({ remoteStartQueuedAt: null })
         .where(
@@ -273,10 +288,15 @@ const make = Effect.gen(function* () {
             eq(relayLiveActivities.deviceId, input.deviceId),
           ),
         )
-        .pipe(Effect.mapError((cause) => new LiveActivityDeliveryMarkPersistenceError({ cause }))),
+        .pipe(Effect.mapError((cause) => new LiveActivityDeliveryMarkPersistenceError({ cause })));
+    }),
 
-    invalidateDeliveryToken: (input) =>
-      Effect.gen(function* () {
+    invalidateDeliveryToken: Effect.fn("relay.live_activities.invalidate_delivery_token")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({
+          "relay.mobile.device_id": input.deviceId,
+          "relay.delivery.kind": input.kind,
+        });
         if (input.kind === "push_notification") {
           yield* db
             .update(relayMobileDevices)
@@ -336,7 +356,9 @@ const make = Effect.gen(function* () {
               eq(relayLiveActivities.deviceId, input.deviceId),
             ),
           );
-      }).pipe(Effect.mapError((cause) => new LiveActivityDeliveryMarkPersistenceError({ cause }))),
+      },
+      Effect.mapError((cause) => new LiveActivityDeliveryMarkPersistenceError({ cause })),
+    ),
   });
 });
 

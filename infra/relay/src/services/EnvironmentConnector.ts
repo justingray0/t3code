@@ -39,7 +39,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 
 import * as EnvironmentLinks from "../persistence/EnvironmentLinks.ts";
-import * as Settings from "../settings.ts";
+import * as RelayConfiguration from "../Config.ts";
 
 export class EnvironmentConnectNotAuthorized extends Data.TaggedError(
   "EnvironmentConnectNotAuthorized",
@@ -114,7 +114,7 @@ function environmentHealthRequestFailureMessage(cause: unknown): string {
     : "Managed endpoint health request failed.";
 }
 
-function verifyWithEnvironmentKeys<A, E>(input: {
+const verifyWithEnvironmentKeys = Effect.fnUntraced(function* <A, E>(input: {
   readonly token: string;
   readonly typ: string;
   readonly issuer: string;
@@ -122,22 +122,20 @@ function verifyWithEnvironmentKeys<A, E>(input: {
   readonly nowEpochSeconds: number;
   readonly environmentPublicKeys: ReadonlyArray<string>;
   readonly decodePayload: (input: unknown) => Effect.Effect<A, E>;
-}): Effect.Effect<A | null> {
+}) {
   const { decodePayload, ...rest } = input;
-  return Effect.gen(function* () {
-    for (const publicKey of input.environmentPublicKeys) {
-      const proof = yield* verifyRelayJwt({ ...rest, publicKey }).pipe(
-        Effect.flatMap(decodePayload),
-        Effect.option,
-      );
-      if (Option.isSome(proof)) {
-        return proof.value;
-      }
-      // A linked environment can have rotated keys; try the remaining active keys.
+  for (const publicKey of input.environmentPublicKeys) {
+    const proof = yield* verifyRelayJwt({ ...rest, publicKey }).pipe(
+      Effect.flatMap(decodePayload),
+      Effect.option,
+    );
+    if (Option.isSome(proof)) {
+      return proof.value;
     }
-    return null;
-  });
-}
+    // A linked environment can have rotated keys; try the remaining active keys.
+  }
+  return null;
+});
 
 function verifyEnvironmentResponse(input: {
   readonly response: typeof RelayEnvironmentMintResponse.Type;
@@ -218,7 +216,7 @@ function verifyEnvironmentHealthResponse(input: {
 
 const make = Effect.gen(function* () {
   const links = yield* EnvironmentLinks.EnvironmentLinks;
-  const settings = yield* Settings.Settings;
+  const settings = yield* RelayConfiguration.RelayConfiguration;
   const httpClient = yield* HttpClient.HttpClient;
   const crypto = yield* Crypto.Crypto;
   const relayIssuer = normalizeRelayIssuer(settings.relayIssuer);

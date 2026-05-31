@@ -31,7 +31,7 @@ import {
 } from "../apnsDeliveryJobs.ts";
 import * as DeliveryAttempts from "../persistence/DeliveryAttempts.ts";
 import * as LiveActivities from "../persistence/LiveActivities.ts";
-import * as Settings from "../settings.ts";
+import * as RelayConfiguration from "../Config.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
 
 const MIN_LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 15_000;
@@ -416,15 +416,15 @@ const make = Effect.gen(function* () {
   const attempts = yield* DeliveryAttempts.DeliveryAttempts;
   const liveActivities = yield* LiveActivities.LiveActivities;
   const deliveryQueue = yield* ApnsDeliveryQueue.ApnsDeliveryQueue;
-  const settings = yield* Settings.Settings;
+  const config = yield* RelayConfiguration.RelayConfiguration;
   const httpClient = yield* HttpClient.HttpClient;
 
-  const isCurrentSignedJobToken = (input: {
+  const isCurrentSignedJobToken = Effect.fnUntraced(function* (input: {
     readonly target: LiveActivityDeliveryTarget;
     readonly kind: RelayDeliveryKind;
     readonly token: string;
-  }) =>
-    liveActivities.listTargets({ userId: input.target.user_id }).pipe(
+  }) {
+    return yield* liveActivities.listTargets({ userId: input.target.user_id }).pipe(
       Effect.map((targets) => {
         const currentTarget = targets.find((row) => row.device_id === input.target.device_id);
         return (
@@ -433,274 +433,286 @@ const make = Effect.gen(function* () {
         );
       }),
     );
+  });
 
-  const sendLiveActivity: ApnsDeliveriesShape["sendLiveActivity"] = (input) =>
-    Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      const aggregate =
-        input.aggregate === null ? null : sanitizeAgentActivityAggregateState(input.aggregate);
-      const { epochSeconds, iso, request } = makeLiveActivityDeliveryRequest(
-        { ...input, aggregate } as SendLiveActivityDeliveryInput,
-        now,
-      );
-      if (input.sourceJobId) {
-        const claim = yield* attempts.claimSourceJob({
-          userId: input.target.user_id,
-          environmentId: null,
-          threadId: null,
-          deviceId: input.target.device_id,
-          kind: input.kind,
-          sourceJobId: input.sourceJobId,
-          token: input.token,
-        });
-        if (claim === "completed") {
-          return duplicateJobResult({ deviceId: input.target.device_id, kind: input.kind });
-        }
-        if (claim === "in_flight") {
-          return yield* new ApnsDeliveryJobClaimInFlight({ sourceJobId: input.sourceJobId });
-        }
-        const tokenIsCurrent = yield* isCurrentSignedJobToken({
-          target: input.target,
-          kind: input.kind,
-          token: input.token,
-        });
-        if (!tokenIsCurrent) {
-          yield* attempts.completeSourceJob({
-            sourceJobId: input.sourceJobId,
-            apnsReason: "Stale APNs delivery job skipped.",
-          });
-          return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
-        }
-      }
-      const result = yield* Apns.sendLiveActivityRequest({
-        credentials: settings.apns,
-        request,
-        issuedAtUnixSeconds: epochSeconds,
-      }).pipe(
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-        Effect.catch((error) =>
-          Effect.succeed({
-            ok: false,
-            status: 0,
-            reason: apnsErrorMessage(error),
-            apnsId: null,
-          }),
-        ),
-      );
-      if (result.ok) {
-        yield* liveActivities.markDelivery({
-          userId: input.target.user_id,
-          deviceId: input.target.device_id,
-          kind: input.kind,
-          aggregate,
-          deliveredAt: iso,
-        });
-      } else if (isPermanentApnsTokenFailure(result)) {
-        yield* liveActivities.invalidateDeliveryToken({
-          userId: input.target.user_id,
-          deviceId: input.target.device_id,
-          kind: input.kind,
-          invalidatedAt: iso,
-        });
-      } else if (input.kind === "live_activity_start") {
-        yield* liveActivities.clearStartQueued({
-          userId: input.target.user_id,
-          deviceId: input.target.device_id,
-        });
-      }
-      if (input.sourceJobId) {
-        yield* attempts.completeSourceJob({
-          sourceJobId: input.sourceJobId,
-          ...deliveryAttemptOutcome(result),
-        });
-      } else {
-        yield* attempts.record({
-          userId: input.target.user_id,
-          environmentId: null,
-          threadId: null,
-          deviceId: input.target.device_id,
-          kind: input.kind,
-          token: input.token,
-          ...deliveryAttemptOutcome(result),
-        });
-      }
-      return {
+  const sendLiveActivity: ApnsDeliveriesShape["sendLiveActivity"] = Effect.fn(
+    "relay.apns_deliveries.send_live_activity",
+  )(function* (input) {
+    yield* Effect.annotateCurrentSpan({
+      "relay.mobile.device_id": input.target.device_id,
+      "relay.delivery.kind": input.kind,
+    });
+    const now = yield* DateTime.now;
+    const aggregate =
+      input.aggregate === null ? null : sanitizeAgentActivityAggregateState(input.aggregate);
+    const { epochSeconds, iso, request } = makeLiveActivityDeliveryRequest(
+      { ...input, aggregate } as SendLiveActivityDeliveryInput,
+      now,
+    );
+    if (input.sourceJobId) {
+      const claim = yield* attempts.claimSourceJob({
+        userId: input.target.user_id,
+        environmentId: null,
+        threadId: null,
         deviceId: input.target.device_id,
         kind: input.kind,
-        ok: result.ok,
-        apnsStatus: result.status === 0 ? null : result.status,
-        apnsReason: result.reason ?? null,
-        apnsId: result.apnsId,
-      };
-    });
-
-  const sendPushNotification: ApnsDeliveriesShape["sendPushNotification"] = (input) =>
-    Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      const epochSeconds = Math.floor(now.epochMilliseconds / 1_000);
-      const notification = sanitizeApnsNotificationPayload(input.notification);
-      const request = Apns.makePushNotificationRequest({
+        sourceJobId: input.sourceJobId,
         token: input.token,
-        notification,
       });
-      if (input.sourceJobId) {
-        const claim = yield* attempts.claimSourceJob({
-          userId: input.target.user_id,
-          environmentId: notification.environmentId,
-          threadId: notification.threadId,
-          deviceId: input.target.device_id,
-          kind: "push_notification",
-          sourceJobId: input.sourceJobId,
-          token: input.token,
-        });
-        if (claim === "completed") {
-          return duplicateJobResult({
-            deviceId: input.target.device_id,
-            kind: "push_notification",
-          });
-        }
-        if (claim === "in_flight") {
-          return yield* new ApnsDeliveryJobClaimInFlight({ sourceJobId: input.sourceJobId });
-        }
-        const tokenIsCurrent = yield* isCurrentSignedJobToken({
-          target: input.target,
-          kind: "push_notification",
-          token: input.token,
-        });
-        if (!tokenIsCurrent) {
-          yield* attempts.completeSourceJob({
-            sourceJobId: input.sourceJobId,
-            apnsReason: "Stale APNs delivery job skipped.",
-          });
-          return staleJobResult({
-            deviceId: input.target.device_id,
-            kind: "push_notification",
-          });
-        }
+      if (claim === "completed") {
+        return duplicateJobResult({ deviceId: input.target.device_id, kind: input.kind });
       }
-      const result = yield* Apns.sendPushNotificationRequest({
-        credentials: settings.apns,
-        request,
-        issuedAtUnixSeconds: epochSeconds,
-      }).pipe(
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-        Effect.catch((error) =>
-          Effect.succeed({
-            ok: false,
-            status: 0,
-            reason: apnsErrorMessage(error),
-            apnsId: null,
-          }),
-        ),
-      );
-      if (isPermanentApnsTokenFailure(result)) {
-        yield* liveActivities.invalidateDeliveryToken({
-          userId: input.target.user_id,
-          deviceId: input.target.device_id,
-          kind: "push_notification",
-          invalidatedAt: DateTime.formatIso(now),
-        });
+      if (claim === "in_flight") {
+        return yield* new ApnsDeliveryJobClaimInFlight({ sourceJobId: input.sourceJobId });
       }
-      if (input.sourceJobId) {
+      const tokenIsCurrent = yield* isCurrentSignedJobToken({
+        target: input.target,
+        kind: input.kind,
+        token: input.token,
+      });
+      if (!tokenIsCurrent) {
         yield* attempts.completeSourceJob({
           sourceJobId: input.sourceJobId,
-          ...deliveryAttemptOutcome(result),
+          apnsReason: "Stale APNs delivery job skipped.",
         });
-      } else {
-        yield* attempts.record({
-          userId: input.target.user_id,
-          environmentId: notification.environmentId,
-          threadId: notification.threadId,
-          deviceId: input.target.device_id,
-          kind: "push_notification",
-          token: input.token,
-          ...deliveryAttemptOutcome(result),
-        });
+        return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
       }
-      return {
+    }
+    const result = yield* Apns.sendLiveActivityRequest({
+      credentials: config.apns,
+      request,
+      issuedAtUnixSeconds: epochSeconds,
+    }).pipe(
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.catch((error) =>
+        Effect.succeed({
+          ok: false,
+          status: 0,
+          reason: apnsErrorMessage(error),
+          apnsId: null,
+        }),
+      ),
+    );
+    if (result.ok) {
+      yield* liveActivities.markDelivery({
+        userId: input.target.user_id,
+        deviceId: input.target.device_id,
+        kind: input.kind,
+        aggregate,
+        deliveredAt: iso,
+      });
+    } else if (isPermanentApnsTokenFailure(result)) {
+      yield* liveActivities.invalidateDeliveryToken({
+        userId: input.target.user_id,
+        deviceId: input.target.device_id,
+        kind: input.kind,
+        invalidatedAt: iso,
+      });
+    } else if (input.kind === "live_activity_start") {
+      yield* liveActivities.clearStartQueued({
+        userId: input.target.user_id,
+        deviceId: input.target.device_id,
+      });
+    }
+    if (input.sourceJobId) {
+      yield* attempts.completeSourceJob({
+        sourceJobId: input.sourceJobId,
+        ...deliveryAttemptOutcome(result),
+      });
+    } else {
+      yield* attempts.record({
+        userId: input.target.user_id,
+        environmentId: null,
+        threadId: null,
+        deviceId: input.target.device_id,
+        kind: input.kind,
+        token: input.token,
+        ...deliveryAttemptOutcome(result),
+      });
+    }
+    return {
+      deviceId: input.target.device_id,
+      kind: input.kind,
+      ok: result.ok,
+      apnsStatus: result.status === 0 ? null : result.status,
+      apnsReason: result.reason ?? null,
+      apnsId: result.apnsId,
+    };
+  });
+
+  const sendPushNotification: ApnsDeliveriesShape["sendPushNotification"] = Effect.fn(
+    "relay.apns_deliveries.send_push_notification",
+  )(function* (input) {
+    yield* Effect.annotateCurrentSpan({
+      "relay.mobile.device_id": input.target.device_id,
+      "relay.delivery.kind": "push_notification",
+    });
+    const now = yield* DateTime.now;
+    const epochSeconds = Math.floor(now.epochMilliseconds / 1_000);
+    const notification = sanitizeApnsNotificationPayload(input.notification);
+    const request = Apns.makePushNotificationRequest({
+      token: input.token,
+      notification,
+    });
+    if (input.sourceJobId) {
+      const claim = yield* attempts.claimSourceJob({
+        userId: input.target.user_id,
+        environmentId: notification.environmentId,
+        threadId: notification.threadId,
         deviceId: input.target.device_id,
         kind: "push_notification",
-        ok: result.ok,
-        apnsStatus: result.status === 0 ? null : result.status,
-        apnsReason: result.reason ?? null,
-        apnsId: result.apnsId,
-      };
-    });
-
-  const processSignedJob: ApnsDeliveriesShape["processSignedJob"] = (body) =>
-    Effect.gen(function* () {
-      const signedJob = yield* decodeSignedApnsDeliveryJob(body).pipe(
-        Effect.mapError(
-          () =>
-            new ApnsDeliveryJobInvalid({
-              message: "Invalid APNs delivery queue job.",
-            }),
-        ),
-      );
-      const now = yield* DateTime.now;
-      const payload = verifySignedApnsDeliveryJob({
-        secret: settings.apnsDeliveryJobSigningSecret,
-        job: signedJob,
-        nowMs: now.epochMilliseconds,
+        sourceJobId: input.sourceJobId,
+        token: input.token,
       });
-      if (isDeliveryJobVerificationError(payload)) {
-        return yield* payload;
+      if (claim === "completed") {
+        return duplicateJobResult({
+          deviceId: input.target.device_id,
+          kind: "push_notification",
+        });
       }
-      switch (payload.kind) {
-        case "live_activity_start":
-        case "live_activity_update":
-          if (payload.aggregate === null) {
-            return yield* new ApnsDeliveryJobInvalid({
-              message: "Live Activity start/update jobs require an aggregate.",
-            });
-          }
-          return yield* sendLiveActivity({
-            target: {
-              user_id: payload.target.userId,
-              device_id: payload.target.deviceId,
-            },
-            token: payload.target.token,
-            sourceJobId: payload.jobId,
-            kind: payload.kind,
-            aggregate: payload.aggregate,
-          });
-        case "live_activity_end":
-          return yield* sendLiveActivity({
-            target: {
-              user_id: payload.target.userId,
-              device_id: payload.target.deviceId,
-            },
-            token: payload.target.token,
-            sourceJobId: payload.jobId,
-            kind: payload.kind,
-            aggregate: payload.aggregate,
-          });
-        case "push_notification":
-          if (payload.notification === null) {
-            return yield* new ApnsDeliveryJobInvalid({
-              message: "Push notification jobs require a notification payload.",
-            });
-          }
-          return yield* sendPushNotification({
-            target: {
-              user_id: payload.target.userId,
-              device_id: payload.target.deviceId,
-            },
-            token: payload.target.token,
-            sourceJobId: payload.jobId,
-            notification: payload.notification,
-          });
+      if (claim === "in_flight") {
+        return yield* new ApnsDeliveryJobClaimInFlight({ sourceJobId: input.sourceJobId });
       }
+      const tokenIsCurrent = yield* isCurrentSignedJobToken({
+        target: input.target,
+        kind: "push_notification",
+        token: input.token,
+      });
+      if (!tokenIsCurrent) {
+        yield* attempts.completeSourceJob({
+          sourceJobId: input.sourceJobId,
+          apnsReason: "Stale APNs delivery job skipped.",
+        });
+        return staleJobResult({
+          deviceId: input.target.device_id,
+          kind: "push_notification",
+        });
+      }
+    }
+    const result = yield* Apns.sendPushNotificationRequest({
+      credentials: config.apns,
+      request,
+      issuedAtUnixSeconds: epochSeconds,
+    }).pipe(
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.catch((error) =>
+        Effect.succeed({
+          ok: false,
+          status: 0,
+          reason: apnsErrorMessage(error),
+          apnsId: null,
+        }),
+      ),
+    );
+    if (isPermanentApnsTokenFailure(result)) {
+      yield* liveActivities.invalidateDeliveryToken({
+        userId: input.target.user_id,
+        deviceId: input.target.device_id,
+        kind: "push_notification",
+        invalidatedAt: DateTime.formatIso(now),
+      });
+    }
+    if (input.sourceJobId) {
+      yield* attempts.completeSourceJob({
+        sourceJobId: input.sourceJobId,
+        ...deliveryAttemptOutcome(result),
+      });
+    } else {
+      yield* attempts.record({
+        userId: input.target.user_id,
+        environmentId: notification.environmentId,
+        threadId: notification.threadId,
+        deviceId: input.target.device_id,
+        kind: "push_notification",
+        token: input.token,
+        ...deliveryAttemptOutcome(result),
+      });
+    }
+    return {
+      deviceId: input.target.device_id,
+      kind: "push_notification",
+      ok: result.ok,
+      apnsStatus: result.status === 0 ? null : result.status,
+      apnsReason: result.reason ?? null,
+      apnsId: result.apnsId,
+    };
+  });
+
+  const processSignedJob: ApnsDeliveriesShape["processSignedJob"] = Effect.fn(
+    "relay.apns_deliveries.process_signed_job",
+  )(function* (body) {
+    const signedJob = yield* decodeSignedApnsDeliveryJob(body).pipe(
+      Effect.mapError(
+        () =>
+          new ApnsDeliveryJobInvalid({
+            message: "Invalid APNs delivery queue job.",
+          }),
+      ),
+    );
+    const now = yield* DateTime.now;
+    const payload = verifySignedApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      job: signedJob,
+      nowMs: now.epochMilliseconds,
     });
+    if (isDeliveryJobVerificationError(payload)) {
+      return yield* payload;
+    }
+    switch (payload.kind) {
+      case "live_activity_start":
+      case "live_activity_update":
+        if (payload.aggregate === null) {
+          return yield* new ApnsDeliveryJobInvalid({
+            message: "Live Activity start/update jobs require an aggregate.",
+          });
+        }
+        return yield* sendLiveActivity({
+          target: {
+            user_id: payload.target.userId,
+            device_id: payload.target.deviceId,
+          },
+          token: payload.target.token,
+          sourceJobId: payload.jobId,
+          kind: payload.kind,
+          aggregate: payload.aggregate,
+        });
+      case "live_activity_end":
+        return yield* sendLiveActivity({
+          target: {
+            user_id: payload.target.userId,
+            device_id: payload.target.deviceId,
+          },
+          token: payload.target.token,
+          sourceJobId: payload.jobId,
+          kind: payload.kind,
+          aggregate: payload.aggregate,
+        });
+      case "push_notification":
+        if (payload.notification === null) {
+          return yield* new ApnsDeliveryJobInvalid({
+            message: "Push notification jobs require a notification payload.",
+          });
+        }
+        return yield* sendPushNotification({
+          target: {
+            user_id: payload.target.userId,
+            device_id: payload.target.deviceId,
+          },
+          token: payload.target.token,
+          sourceJobId: payload.jobId,
+          notification: payload.notification,
+        });
+    }
+  });
 
   return ApnsDeliveries.of({
     sendLiveActivity,
     sendPushNotification,
     processSignedJob,
-    sendPushNotificationForTarget: (input) => {
+    sendPushNotificationForTarget: Effect.fnUntraced(function* (input) {
       const notification = notificationForAggregate(input);
       const token = input.target.push_token;
-      return notification && token
+      return yield* notification && token
         ? deliveryQueue.enqueuePushNotification({
             userId: input.target.user_id,
             deviceId: input.target.device_id,
@@ -708,56 +720,54 @@ const make = Effect.gen(function* () {
             notification,
           })
         : Effect.succeed(null);
-    },
-    sendForTarget: (input) => {
+    }),
+    sendForTarget: Effect.fnUntraced(function* (input) {
       const delivery = chooseDelivery({
         target: input.target,
         aggregate: input.aggregate,
         nowMs: input.nowMs,
       });
       if (!delivery) {
-        return Effect.succeed(null);
+        return null;
       }
-      return Effect.gen(function* () {
-        if (delivery.kind === "push_notification") {
-          const result = yield* deliveryQueue.enqueuePushNotification({
-            userId: input.target.user_id,
-            deviceId: input.target.device_id,
-            token: delivery.token,
-            notification: delivery.notification,
-          });
-          return result;
-        }
-        const result = yield* deliveryQueue.enqueueLiveActivity({
+      if (delivery.kind === "push_notification") {
+        const result = yield* deliveryQueue.enqueuePushNotification({
           userId: input.target.user_id,
           deviceId: input.target.device_id,
-          kind: delivery.kind,
           token: delivery.token,
-          aggregate: delivery.aggregate,
+          notification: delivery.notification,
         });
-        const notification = notificationForAggregate({
-          target: input.target,
-          aggregate: input.aggregate,
-        });
-        if (delivery.kind === "live_activity_end" && notification && input.target.push_token) {
-          yield* deliveryQueue.enqueuePushNotification({
-            userId: input.target.user_id,
-            deviceId: input.target.device_id,
-            token: input.target.push_token,
-            notification,
-          });
-        }
-        if (delivery.kind === "live_activity_start") {
-          const now = yield* DateTime.now;
-          yield* liveActivities.markStartQueued({
-            userId: input.target.user_id,
-            deviceId: input.target.device_id,
-            queuedAt: DateTime.formatIso(now),
-          });
-        }
         return result;
+      }
+      const result = yield* deliveryQueue.enqueueLiveActivity({
+        userId: input.target.user_id,
+        deviceId: input.target.device_id,
+        kind: delivery.kind,
+        token: delivery.token,
+        aggregate: delivery.aggregate,
       });
-    },
+      const notification = notificationForAggregate({
+        target: input.target,
+        aggregate: input.aggregate,
+      });
+      if (delivery.kind === "live_activity_end" && notification && input.target.push_token) {
+        yield* deliveryQueue.enqueuePushNotification({
+          userId: input.target.user_id,
+          deviceId: input.target.device_id,
+          token: input.target.push_token,
+          notification,
+        });
+      }
+      if (delivery.kind === "live_activity_start") {
+        const now = yield* DateTime.now;
+        yield* liveActivities.markStartQueued({
+          userId: input.target.user_id,
+          deviceId: input.target.device_id,
+          queuedAt: DateTime.formatIso(now),
+        });
+      }
+      return result;
+    }),
   });
 });
 

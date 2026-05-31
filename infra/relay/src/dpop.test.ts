@@ -10,7 +10,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import { verifyAndConsumeDpopProof } from "./dpop.ts";
-import type * as DpopProofs from "./persistence/DpopProofs.ts";
+import * as DpopProofs from "./persistence/DpopProofs.ts";
 
 function makeDpopProof(input: {
   readonly method: string;
@@ -69,6 +69,7 @@ describe("verifyAndConsumeDpopProof", () => {
           consumed.add(key);
           return true;
         }),
+      pruneExpired: Effect.void,
     };
 
     return Effect.gen(function* () {
@@ -78,7 +79,6 @@ describe("verifyAndConsumeDpopProof", () => {
         url: "https://relay.example.com/v1/environments/env/connect",
         expectedThumbprint: proof.thumbprint,
         now,
-        dpopProofs,
       });
       const replay = yield* Effect.exit(
         verifyAndConsumeDpopProof({
@@ -87,13 +87,12 @@ describe("verifyAndConsumeDpopProof", () => {
           url: "https://relay.example.com/v1/environments/env/connect",
           expectedThumbprint: proof.thumbprint,
           now,
-          dpopProofs,
         }),
       );
 
       expect(first).toBe(proof.thumbprint);
       expect(replay._tag).toBe("Failure");
-    });
+    }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
   });
 
   it.effect("rejects proofs missing the expected access token hash", () => {
@@ -106,6 +105,7 @@ describe("verifyAndConsumeDpopProof", () => {
     });
     const dpopProofs: DpopProofs.DpopProofReplayShape = {
       consume: () => Effect.succeed(true),
+      pruneExpired: Effect.void,
     };
 
     return Effect.gen(function* () {
@@ -117,12 +117,11 @@ describe("verifyAndConsumeDpopProof", () => {
           expectedThumbprint: proof.thumbprint,
           expectedAccessToken: "clerk-access-token",
           now,
-          dpopProofs,
         }),
       );
 
       expect(result._tag).toBe("Failure");
-    });
+    }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
   });
 
   it.effect("accepts unbound DPoP proofs when they are bound to the access token hash", () => {
@@ -145,6 +144,7 @@ describe("verifyAndConsumeDpopProof", () => {
           consumed.add(key);
           return true;
         }),
+      pruneExpired: Effect.void,
     };
 
     return Effect.gen(function* () {
@@ -154,7 +154,6 @@ describe("verifyAndConsumeDpopProof", () => {
         url: "https://relay.example.com/v1/environments/env/status",
         expectedAccessToken: "clerk-access-token",
         now,
-        dpopProofs,
       });
       const replay = yield* Effect.exit(
         verifyAndConsumeDpopProof({
@@ -163,12 +162,11 @@ describe("verifyAndConsumeDpopProof", () => {
           url: "https://relay.example.com/v1/environments/env/status",
           expectedAccessToken: "clerk-access-token",
           now,
-          dpopProofs,
         }),
       );
 
       expect(thumbprint).toBe(proof.thumbprint);
       expect(replay._tag).toBe("Failure");
-    });
+    }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
   });
 });

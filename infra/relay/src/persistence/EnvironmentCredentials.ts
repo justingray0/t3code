@@ -68,7 +68,7 @@ const make = Effect.gen(function* () {
     Effect.map(Effect.all(Array.from({ length: segments }, () => crypto.randomUUIDv4)), (values) =>
       values.join("").replaceAll("-", ""),
     );
-  const makeCredential = Effect.gen(function* () {
+  const makeCredential = Effect.fnUntraced(function* () {
     const credentialId = yield* randomTokenPart(2);
     const secret = yield* randomTokenPart(3);
     return {
@@ -78,9 +78,10 @@ const make = Effect.gen(function* () {
   });
 
   return EnvironmentCredentials.of({
-    create: (input) =>
-      Effect.gen(function* () {
-        const credential = yield* makeCredential;
+    create: Effect.fn("relay.environment_credentials.create")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
+        const credential = yield* makeCredential();
         const credentialHash = yield* hashToken(credential.token);
         const now = DateTime.formatIso(yield* DateTime.now);
         yield* db.insert(relayEnvironmentCredentials).values({
@@ -107,12 +108,12 @@ const make = Effect.gen(function* () {
             ),
           );
         return credential.token;
-      }).pipe(
-        Effect.mapError((cause) => new EnvironmentCredentialCreatePersistenceError({ cause })),
-      ),
+      },
+      Effect.mapError((cause) => new EnvironmentCredentialCreatePersistenceError({ cause })),
+    ),
 
-    authenticate: (token) =>
-      Effect.gen(function* () {
+    authenticate: Effect.fn("relay.environment_credentials.authenticate")(
+      function* (token) {
         const credentialHash = yield* hashToken(token);
         const rows = yield* db
           .select({
@@ -136,14 +137,15 @@ const make = Effect.gen(function* () {
               environmentPublicKey: row.environmentPublicKey,
             })
           : Option.none();
-      }).pipe(
-        Effect.mapError(
-          (cause) => new EnvironmentCredentialAuthenticatePersistenceError({ cause }),
-        ),
-      ),
+      },
+      Effect.mapError((cause) => new EnvironmentCredentialAuthenticatePersistenceError({ cause })),
+    ),
 
-    revokeForEnvironmentPublicKey: (input) =>
-      Effect.gen(function* () {
+    revokeForEnvironmentPublicKey: Effect.fn(
+      "relay.environment_credentials.revoke_for_environment_public_key",
+    )(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
         const revokedAt = DateTime.formatIso(yield* DateTime.now);
         const rows = yield* db
           .update(relayEnvironmentCredentials)
@@ -162,9 +164,9 @@ const make = Effect.gen(function* () {
             credentialId: relayEnvironmentCredentials.credentialId,
           });
         return rows.length > 0;
-      }).pipe(
-        Effect.mapError((cause) => new EnvironmentCredentialRevokePersistenceError({ cause })),
-      ),
+      },
+      Effect.mapError((cause) => new EnvironmentCredentialRevokePersistenceError({ cause })),
+    ),
   });
 });
 

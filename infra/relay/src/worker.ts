@@ -6,7 +6,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient } from "effect/unstable/http";
 import * as Etag from "effect/unstable/http/Etag";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
@@ -52,7 +51,7 @@ import * as EnvironmentLinks from "./persistence/EnvironmentLinks.ts";
 import * as LiveActivities from "./persistence/LiveActivities.ts";
 import { RelayDb, RelayHyperdrive } from "./db.ts";
 import { RelayApnsDeliveryDeadLetterQueue, RelayApnsDeliveryQueue } from "./queues.ts";
-import * as Settings from "./settings.ts";
+import * as RelayConfiguration from "./Config.ts";
 import * as AgentActivityPublisher from "./services/AgentActivityPublisher.ts";
 import * as ApnsDeliveryQueue from "./services/ApnsDeliveryQueue.ts";
 import * as ApnsDeliveries from "./services/ApnsDeliveries.ts";
@@ -73,14 +72,6 @@ const relayApiLayer = Layer.mergeAll(
   serverApi,
 );
 
-const makeAxiomHeaders = (input: {
-  readonly token: Redacted.Redacted<string>;
-  readonly dataset: string;
-}) => ({
-  Authorization: `Bearer ${Redacted.value(input.token)}`,
-  "X-Axiom-Dataset": input.dataset,
-});
-
 const makeRelayTraceLayer = (input: {
   readonly tracesEndpoint: string;
   readonly tracesDatasetName: string;
@@ -95,12 +86,12 @@ const makeRelayTraceLayer = (input: {
         "service.component": "relay",
       },
     },
-    headers: makeAxiomHeaders({
-      token: input.ingestToken,
-      dataset: input.tracesDatasetName,
-    }),
+    headers: {
+      Authorization: `Bearer ${Redacted.value(input.ingestToken)}`,
+      "X-Axiom-Dataset": input.tracesDatasetName,
+    },
     exportInterval: RELAY_OBSERVABILITY_EXPORT_INTERVAL,
-  }).pipe(Layer.provide(OtlpSerialization.layerJson), Layer.provide(FetchHttpClient.layer));
+  }).pipe(Layer.provide(OtlpSerialization.layerJson));
 
 // Bind secrets explicitly and only read them through the runtime worker
 // environment. Reading them through Config during Worker init currently
@@ -137,9 +128,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const hyperdrive = yield* Cloudflare.Hyperdrive.bind(relayHyperdrive);
     const apnsDeliveryQueueSender = yield* Cloudflare.QueueBinding.bind(apnsDeliveryQueue);
     const cloudMintKeyPair = yield* Alchemy.KeyPair("CloudMintKeyPair");
-    const environment = yield* Config.schema(Settings.ApnsEnvironment, "APNS_ENVIRONMENT").pipe(
-      Config.withDefault("sandbox"),
-    );
+    const environment = yield* Config.schema(
+      RelayConfiguration.ApnsEnvironment,
+      "APNS_ENVIRONMENT",
+    ).pipe(Config.withDefault("sandbox"));
     const apnsTeamId = yield* Config.string("APNS_TEAM_ID");
     const apnsKeyId = yield* Config.string("APNS_KEY_ID");
     const apnsBundleId = yield* Config.string("APNS_BUNDLE_ID");
@@ -168,7 +160,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       const workerEnvironment = yield* Cloudflare.WorkerEnvironment;
       const apnsPrivateKey = Redacted.make(workerEnvironment.APNS_PRIVATE_KEY);
       const clerkSecretKey = Redacted.make(workerEnvironment.CLERK_SECRET_KEY);
-      return Settings.Settings.of({
+      return RelayConfiguration.RelayConfiguration.of({
         relayIssuer: RELAY_PUBLIC_ORIGIN,
         apns: {
           environment,
@@ -188,47 +180,49 @@ export default class Api extends Cloudflare.Worker<Api>()(
       });
     });
 
-    const makeRuntimeLayer = (settings: Settings.SettingsShape) =>
-      Layer.mergeAll(
-        MobileRegistrations.layer.pipe(Layer.provideMerge(AgentActivityPublisher.layer)),
-        EnvironmentConnector.layer,
-        EnvironmentLinker.layer.pipe(
-          Layer.provideMerge(ManagedEndpointProvider.layer),
-          Layer.provideMerge(DpopProofs.layer),
-        ),
-        EnvironmentPublishSignatures.layer.pipe(Layer.provideMerge(DpopProofs.layer)),
-        DpopProofs.layer,
-      ).pipe(
-        Layer.provide(ApnsDeliveries.layer),
-        Layer.provide(ApnsDeliveryQueue.layer),
-        Layer.provide(AgentActivityRows.layer),
-        Layer.provide(Devices.layer),
-        Layer.provide(EnvironmentCredentials.layer),
-        Layer.provide(EnvironmentLinks.layer),
-        Layer.provide(LiveActivities.layer),
-        Layer.provide(DeliveryAttempts.layer),
-        Layer.provide(Layer.succeed(RelayDb, db)),
-        Layer.provide(
-          Layer.succeed(ApnsDeliveryQueue.ApnsDeliveryQueueSender, {
-            send: (body) =>
-              apnsDeliveryQueueSender
-                .send(body)
-                .pipe(
-                  Effect.mapError(
-                    (cause) => new ApnsDeliveryQueue.ApnsDeliveryQueueSendError({ cause }),
-                  ),
-                ) as Effect.Effect<void, ApnsDeliveryQueue.ApnsDeliveryQueueSendError>,
-          }),
-        ),
-        Layer.provide(Layer.succeed(Settings.Settings, settings)),
-        Layer.provide(FetchHttpClient.layer),
-        Layer.provide(RelayCrypto.layer),
-      );
+    const runtimeLayer = Layer.unwrap(
+      Effect.gen(function* () {
+        const settings = yield* loadSettings;
+        return Layer.mergeAll(
+          MobileRegistrations.layer.pipe(Layer.provideMerge(AgentActivityPublisher.layer)),
+          EnvironmentConnector.layer,
+          EnvironmentLinker.layer.pipe(
+            Layer.provideMerge(ManagedEndpointProvider.layer),
+            Layer.provideMerge(DpopProofs.layer),
+          ),
+          EnvironmentPublishSignatures.layer.pipe(Layer.provideMerge(DpopProofs.layer)),
+          DpopProofs.layer,
+        ).pipe(
+          Layer.provide(ApnsDeliveries.layer),
+          Layer.provide(ApnsDeliveryQueue.layer),
+          Layer.provide(AgentActivityRows.layer),
+          Layer.provide(Devices.layer),
+          Layer.provide(EnvironmentCredentials.layer),
+          Layer.provide(EnvironmentLinks.layer),
+          Layer.provide(LiveActivities.layer),
+          Layer.provide(DeliveryAttempts.layer),
+          Layer.provide(Layer.succeed(RelayDb, db)),
+          Layer.provide(
+            Layer.succeed(ApnsDeliveryQueue.ApnsDeliveryQueueSender, {
+              send: (body) =>
+                apnsDeliveryQueueSender
+                  .send(body)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) => new ApnsDeliveryQueue.ApnsDeliveryQueueSendError({ cause }),
+                    ),
+                  ) as Effect.Effect<void, ApnsDeliveryQueue.ApnsDeliveryQueueSendError>,
+            }),
+          ),
+          Layer.provide(Layer.succeed(RelayConfiguration.RelayConfiguration, settings)),
+          Layer.provide(RelayCrypto.layer),
+        );
+      }),
+    );
 
     const appLayer = Layer.unwrap(
       Effect.gen(function* () {
         const settings = yield* loadSettings;
-        const runtimeLayer = makeRuntimeLayer(settings);
         return relayApiLayer.pipe(
           Layer.provide(runtimeLayer),
           Layer.provide(relayClientAuthLayer),
@@ -237,7 +231,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           Layer.provide(EnvironmentCredentials.layer),
           Layer.provide(EnvironmentLinks.layer),
           Layer.provide(Layer.succeed(RelayDb, db)),
-          Layer.provide(Layer.succeed(Settings.Settings, settings)),
+          Layer.provideMerge(Layer.succeed(RelayConfiguration.RelayConfiguration, settings)),
           Layer.provide(RelayCrypto.layer),
         );
       }),
@@ -250,27 +244,26 @@ export default class Api extends Cloudflare.Worker<Api>()(
       retryDelay: "30 seconds",
       // Alchemy beta.45 expects a resolved string here although Queue names are Outputs.
       deadLetterQueue: apnsDeliveryDeadLetterQueue.queueName as unknown as string,
-    }).subscribe(
-      Effect.fnUntraced(function* (stream) {
-        const settings = yield* loadSettings;
-        yield* stream.pipe(
-          Stream.withSpan("relay.apn_delivery_queue.process_batch"),
-          Stream.runForEach(
-            Effect.fn("relay.apn_delivery_queue.process_message")((message) =>
-              ApnsDeliveries.ApnsDeliveries.pipe(
-                Effect.flatMap((deliveries) => deliveries.processSignedJob(message.body)),
-              ),
+    }).subscribe((stream) =>
+      stream.pipe(
+        Stream.withSpan("relay.apn_delivery_queue.process_batch"),
+        Stream.runForEach(
+          Effect.fn("relay.apn_delivery_queue.process_message")((message) =>
+            ApnsDeliveries.ApnsDeliveries.pipe(
+              Effect.flatMap((deliveries) => deliveries.processSignedJob(message.body)),
             ),
           ),
-          Effect.provide(makeRuntimeLayer(settings)),
-        );
-      }),
+        ),
+        Effect.provide(runtimeLayer),
+      ),
     );
 
-    yield* Cloudflare.cron("*/5 * * * *").subscribe(
-      Effect.fnUntraced(function* () {
-        yield* DpopProofs.pruneExpired(db);
-      }),
+    yield* Cloudflare.cron("*/5 * * * *").subscribe(() =>
+      DpopProofs.DpopProofReplay.pipe(
+        Effect.flatMap((dpopProofs) => dpopProofs.pruneExpired),
+        Effect.withSpan("relay.cron.prune_expired_dpop_proofs"),
+        Effect.provide(runtimeLayer),
+      ),
     );
 
     const fetch = HttpApiBuilder.layer(RelayApi).pipe(

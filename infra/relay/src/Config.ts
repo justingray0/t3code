@@ -13,7 +13,7 @@ export interface ApnsCredentials {
   readonly environment: ApnsEnvironment;
 }
 
-export interface SettingsShape {
+export interface RelayConfigurationShape {
   readonly relayIssuer: string;
   readonly apns: ApnsCredentials;
   readonly clerkSecretKey: Redacted.Redacted<string>;
@@ -26,4 +26,7 @@ export interface SettingsShape {
   readonly cloudflareApiToken: Redacted.Redacted<string> | undefined;
 }
 
-export class Settings extends Context.Service<Settings, SettingsShape>()("Settings") {}
+export class RelayConfiguration extends Context.Service<
+  RelayConfiguration,
+  RelayConfigurationShape
+>()("RelayConfiguration") {}

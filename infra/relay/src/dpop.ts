@@ -5,16 +5,21 @@ import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
 
 import * as DpopProofs from "./persistence/DpopProofs.ts";
 
-export function verifyAndConsumeDpopProof(input: {
-  readonly proof: string | undefined;
-  readonly method: string;
-  readonly url: string;
-  readonly expectedThumbprint?: string;
-  readonly expectedAccessToken?: string;
-  readonly now: DateTime.DateTime;
-  readonly dpopProofs: DpopProofs.DpopProofReplayShape;
-}) {
-  return Effect.gen(function* () {
+export const verifyAndConsumeDpopProof = Effect.fn("relay.dpop.verify_and_consume")(
+  function* (input: {
+    readonly proof: string | undefined;
+    readonly method: string;
+    readonly url: string;
+    readonly expectedThumbprint?: string;
+    readonly expectedAccessToken?: string;
+    readonly now: DateTime.DateTime;
+  }) {
+    const dpopProofs = yield* DpopProofs.DpopProofReplay;
+    yield* Effect.annotateCurrentSpan({
+      "relay.dpop.method": input.method,
+      "relay.dpop.expected_thumbprint_present": input.expectedThumbprint !== undefined,
+      "relay.dpop.expected_access_token_present": input.expectedAccessToken !== undefined,
+    });
     const result = verifyDpopProof({
       proof: input.proof,
       method: input.method,
@@ -33,7 +38,7 @@ export function verifyAndConsumeDpopProof(input: {
       });
       return yield* new HttpApiError.Unauthorized({});
     }
-    const consumed = yield* input.dpopProofs
+    const consumed = yield* dpopProofs
       .consume({
         thumbprint: result.thumbprint,
         jti: result.jti,
@@ -49,6 +54,10 @@ export function verifyAndConsumeDpopProof(input: {
       });
       return yield* new HttpApiError.Unauthorized({});
     }
+    yield* Effect.annotateCurrentSpan({
+      "relay.dpop.thumbprint": result.thumbprint,
+      "relay.dpop.iat": result.iat,
+    });
     return result.thumbprint;
-  });
-}
+  },
+);

@@ -22,11 +22,11 @@ import {
 } from "../apnsDeliveryJobs.ts";
 import * as DeliveryAttempts from "../persistence/DeliveryAttempts.ts";
 import * as LiveActivities from "../persistence/LiveActivities.ts";
-import * as Settings from "../settings.ts";
+import * as RelayConfiguration from "../Config.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 
-const settings = Settings.Settings.of({
+const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
   apns: {
     environment: "sandbox",
@@ -51,10 +51,10 @@ const apnsSigningKeyPair = NodeCrypto.generateKeyPairSync("ec", {
   publicKeyEncoding: { format: "pem", type: "spki" },
 });
 
-const signingSettings = Settings.Settings.of({
-  ...settings,
+const signingConfig = RelayConfiguration.RelayConfiguration.of({
+  ...config,
   apns: {
-    ...settings.apns,
+    ...config.apns,
     privateKey: Redacted.make(apnsSigningKeyPair.privateKey),
   },
 });
@@ -152,7 +152,7 @@ function makeLayer(input: {
     Parameters<LiveActivities.LiveActivitiesShape["invalidateDeliveryToken"]>[0]
   >;
   readonly currentTargets?: ReadonlyArray<LiveActivities.TargetRow>;
-  readonly settings?: Settings.SettingsShape;
+  readonly config?: RelayConfiguration.RelayConfigurationShape;
   readonly execute?: (
     request: HttpClientRequest.HttpClientRequest,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse>;
@@ -211,7 +211,7 @@ function makeLayer(input: {
               input.invalidatedTokens?.push(invalidated);
             }),
         }),
-        Layer.succeed(Settings.Settings, input.settings ?? settings),
+        Layer.succeed(RelayConfiguration.RelayConfiguration, input.config ?? config),
         input.execute
           ? Layer.succeed(HttpClient.HttpClient, HttpClient.make(input.execute))
           : FetchHttpClient.layer,
@@ -622,7 +622,7 @@ describe("ApnsDeliveries", () => {
       jobId: "job-1",
     });
     const signed = signApnsDeliveryJob({
-      secret: settings.apnsDeliveryJobSigningSecret,
+      secret: config.apnsDeliveryJobSigningSecret,
       payload,
     });
 
@@ -662,7 +662,7 @@ describe("ApnsDeliveries", () => {
       jobId: "job-push-1",
     });
     const signed = signApnsDeliveryJob({
-      secret: settings.apnsDeliveryJobSigningSecret,
+      secret: config.apnsDeliveryJobSigningSecret,
       payload,
     });
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -696,7 +696,7 @@ describe("ApnsDeliveries", () => {
               push_token: "apns-device-token",
             },
           ],
-          settings: signingSettings,
+          config: signingConfig,
           execute,
         }),
       ),
@@ -724,7 +724,7 @@ describe("ApnsDeliveries", () => {
       jobId: "job-push-duplicate",
     });
     const signed = signApnsDeliveryJob({
-      secret: settings.apnsDeliveryJobSigningSecret,
+      secret: config.apnsDeliveryJobSigningSecret,
       payload,
     });
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -750,7 +750,7 @@ describe("ApnsDeliveries", () => {
         makeLayer({
           attempts,
           sourceJobClaims: new Map([["job-push-duplicate", "completed"]]),
-          settings: signingSettings,
+          config: signingConfig,
           execute,
         }),
       ),
@@ -771,7 +771,7 @@ describe("ApnsDeliveries", () => {
       jobId: "job-update-stale-token",
     });
     const signed = signApnsDeliveryJob({
-      secret: settings.apnsDeliveryJobSigningSecret,
+      secret: config.apnsDeliveryJobSigningSecret,
       payload,
     });
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -803,7 +803,7 @@ describe("ApnsDeliveries", () => {
       Effect.provide(
         makeLayer({
           attempts,
-          settings: signingSettings,
+          config: signingConfig,
           execute,
         }),
       ),
@@ -831,7 +831,7 @@ describe("ApnsDeliveries", () => {
       jobId: "job-push-stale-token",
     });
     const signed = signApnsDeliveryJob({
-      secret: settings.apnsDeliveryJobSigningSecret,
+      secret: config.apnsDeliveryJobSigningSecret,
       payload,
     });
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -869,7 +869,7 @@ describe("ApnsDeliveries", () => {
               push_token: "current-device-token",
             },
           ],
-          settings: signingSettings,
+          config: signingConfig,
           execute,
         }),
       ),
@@ -897,7 +897,7 @@ describe("ApnsDeliveries", () => {
       jobId: "job-push-in-flight",
     });
     const signed = signApnsDeliveryJob({
-      secret: settings.apnsDeliveryJobSigningSecret,
+      secret: config.apnsDeliveryJobSigningSecret,
       payload,
     });
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -921,7 +921,7 @@ describe("ApnsDeliveries", () => {
         makeLayer({
           attempts,
           sourceJobClaims: new Map([["job-push-in-flight", "in_flight"]]),
-          settings: signingSettings,
+          config: signingConfig,
           execute,
         }),
       ),
@@ -951,7 +951,7 @@ describe("ApnsDeliveries", () => {
       jobId: "job-push-bad-token",
     });
     const signed = signApnsDeliveryJob({
-      secret: settings.apnsDeliveryJobSigningSecret,
+      secret: config.apnsDeliveryJobSigningSecret,
       payload,
     });
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -988,7 +988,7 @@ describe("ApnsDeliveries", () => {
               push_token: "apns-device-token",
             },
           ],
-          settings: signingSettings,
+          config: signingConfig,
           execute,
         }),
       ),
@@ -1011,7 +1011,7 @@ describe("ApnsDeliveries", () => {
       jobId: "job-start-1",
     });
     const signed = signApnsDeliveryJob({
-      secret: settings.apnsDeliveryJobSigningSecret,
+      secret: config.apnsDeliveryJobSigningSecret,
       payload,
     });
 
@@ -1046,7 +1046,7 @@ describe("ApnsDeliveries", () => {
       jobId: "job-start-bad-token",
     });
     const signed = signApnsDeliveryJob({
-      secret: settings.apnsDeliveryJobSigningSecret,
+      secret: config.apnsDeliveryJobSigningSecret,
       payload,
     });
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -1073,9 +1073,7 @@ describe("ApnsDeliveries", () => {
         },
       ]);
     }).pipe(
-      Effect.provide(
-        makeLayer({ attempts, invalidatedTokens, settings: signingSettings, execute }),
-      ),
+      Effect.provide(makeLayer({ attempts, invalidatedTokens, config: signingConfig, execute })),
     );
   });
 
@@ -1095,7 +1093,7 @@ describe("ApnsDeliveries", () => {
       jobId: "job-update-unregistered",
     });
     const signed = signApnsDeliveryJob({
-      secret: settings.apnsDeliveryJobSigningSecret,
+      secret: config.apnsDeliveryJobSigningSecret,
       payload,
     });
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -1122,9 +1120,7 @@ describe("ApnsDeliveries", () => {
         },
       ]);
     }).pipe(
-      Effect.provide(
-        makeLayer({ attempts, invalidatedTokens, settings: signingSettings, execute }),
-      ),
+      Effect.provide(makeLayer({ attempts, invalidatedTokens, config: signingConfig, execute })),
     );
   });
 });

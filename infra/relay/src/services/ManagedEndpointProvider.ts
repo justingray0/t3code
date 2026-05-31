@@ -15,7 +15,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
-import * as Settings from "../settings.ts";
+import * as RelayConfiguration from "../Config.ts";
 
 export class ManagedEndpointProvisioningNotConfigured extends Data.TaggedError(
   "ManagedEndpointProvisioningNotConfigured",
@@ -92,24 +92,24 @@ const CloudflareDnsRecordListResponse = Schema.Struct({
   ),
 });
 
-function requireCloudflareSettings(settings: Settings.SettingsShape) {
-  return Effect.gen(function* () {
-    if (
-      !settings.managedEndpointBaseDomain ||
-      !settings.cloudflareAccountId ||
-      !settings.cloudflareZoneId ||
-      !settings.cloudflareApiToken
-    ) {
-      return yield* new ManagedEndpointProvisioningNotConfigured();
-    }
-    return {
-      accountId: settings.cloudflareAccountId,
-      zoneId: settings.cloudflareZoneId,
-      apiToken: Redacted.value(settings.cloudflareApiToken),
-      baseDomain: settings.managedEndpointBaseDomain,
-    };
-  });
-}
+const requireCloudflareSettings = Effect.fnUntraced(function* (
+  settings: RelayConfiguration.RelayConfigurationShape,
+) {
+  if (
+    !settings.managedEndpointBaseDomain ||
+    !settings.cloudflareAccountId ||
+    !settings.cloudflareZoneId ||
+    !settings.cloudflareApiToken
+  ) {
+    return yield* new ManagedEndpointProvisioningNotConfigured();
+  }
+  return {
+    accountId: settings.cloudflareAccountId,
+    zoneId: settings.cloudflareZoneId,
+    apiToken: Redacted.value(settings.cloudflareApiToken),
+    baseDomain: settings.managedEndpointBaseDomain,
+  };
+});
 
 function cloudflareRequest(input: {
   readonly method: "GET" | "POST" | "PUT";
@@ -188,7 +188,7 @@ function isLoopbackOrigin(origin: RelayManagedEndpointOrigin): boolean {
 }
 
 const make = Effect.gen(function* () {
-  const settings = yield* Settings.Settings;
+  const config = yield* RelayConfiguration.RelayConfiguration;
   const httpClient = yield* HttpClient.HttpClient;
   const crypto = yield* Crypto.Crypto;
 
@@ -202,27 +202,26 @@ const make = Effect.gen(function* () {
       ? Effect.fail(new ManagedEndpointProvisioningFailed({ cause: json }))
       : Effect.void;
 
-  const executeJson = <A>(
+  const executeJson = Effect.fnUntraced(function* <A>(
     request: HttpClientRequest.HttpClientRequest,
     schema: Schema.Schema<A>,
-  ): Effect.Effect<A, ManagedEndpointProvisioningFailed> =>
-    Effect.gen(function* () {
-      const response = yield* httpClient
-        .execute(request)
-        .pipe(Effect.mapError((cause) => new ManagedEndpointProvisioningFailed({ cause })));
-      if (response.status < 200 || response.status >= 300) {
-        return yield* new ManagedEndpointProvisioningFailed({ cause: response.status });
-      }
-      const json = yield* response.json.pipe(
-        Effect.mapError((cause) => new ManagedEndpointProvisioningFailed({ cause })),
-      );
-      const isSchema = Schema.is(schema);
-      if (!isSchema(json)) {
-        return yield* new ManagedEndpointProvisioningFailed({ cause: json });
-      }
-      yield* requireCloudflareSuccess(json);
-      return json;
-    });
+  ) {
+    const response = yield* httpClient
+      .execute(request)
+      .pipe(Effect.mapError((cause) => new ManagedEndpointProvisioningFailed({ cause })));
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new ManagedEndpointProvisioningFailed({ cause: response.status });
+    }
+    const json = yield* response.json.pipe(
+      Effect.mapError((cause) => new ManagedEndpointProvisioningFailed({ cause })),
+    );
+    const isSchema = Schema.is(schema);
+    if (!isSchema(json)) {
+      return yield* new ManagedEndpointProvisioningFailed({ cause: json });
+    }
+    yield* requireCloudflareSuccess(json);
+    return json;
+  });
 
   return ManagedEndpointProvider.of({
     provision: Effect.fn("relay.managed_endpoint_provider.provision")(function* (input) {
@@ -237,7 +236,7 @@ const make = Effect.gen(function* () {
           port: input.origin.localHttpPort,
         });
       }
-      const cf = yield* requireCloudflareSettings(settings);
+      const cf = yield* requireCloudflareSettings(config);
       const environmentHash = yield* crypto
         .digest("SHA-256", new TextEncoder().encode(input.environmentId))
         .pipe(

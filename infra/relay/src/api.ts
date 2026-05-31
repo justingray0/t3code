@@ -56,7 +56,7 @@ import * as DpopProofs from "./persistence/DpopProofs.ts";
 import * as EnvironmentCredentials from "./persistence/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "./persistence/EnvironmentLinks.ts";
 import * as LiveActivities from "./persistence/LiveActivities.ts";
-import * as Settings from "./settings.ts";
+import * as RelayConfiguration from "./Config.ts";
 import * as AgentActivityPublisher from "./services/AgentActivityPublisher.ts";
 import * as EnvironmentConnector from "./services/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "./services/EnvironmentLinker.ts";
@@ -116,18 +116,23 @@ const appendRelayDpopChallengeHeader = HttpEffect.appendPreResponseHandler((_req
 );
 
 export const relayCors = HttpRouter.middleware(
-  (httpEffect) =>
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      if (request.method === "OPTIONS") {
-        return HttpServerResponse.empty({
-          status: 204,
-          headers: relayCorsPreflightHeaders,
-        });
-      }
-      const response = yield* httpEffect;
-      return HttpServerResponse.setHeaders(response, relayCorsHeaders);
-    }),
+  Effect.fnUntraced(function* <E, R>(
+    httpEffect: Effect.Effect<
+      HttpServerResponse.HttpServerResponse,
+      E,
+      HttpServerRequest.HttpServerRequest | R
+    >,
+  ) {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    if (request.method === "OPTIONS") {
+      return HttpServerResponse.empty({
+        status: 204,
+        headers: relayCorsPreflightHeaders,
+      });
+    }
+    const response = yield* httpEffect;
+    return HttpServerResponse.setHeaders(response, relayCorsHeaders);
+  }),
   { global: true },
 );
 
@@ -144,30 +149,29 @@ export const traceRelayHttpRequest = <E, R>(
 export const relayClientAuthLayer = Layer.effect(
   RelayClientAuth,
   Effect.gen(function* () {
-    const settings = yield* Settings.Settings;
+    const config = yield* RelayConfiguration.RelayConfiguration;
     return {
-      bearer: (httpEffect, { credential }) =>
-        Effect.gen(function* () {
-          const token = Redacted.value(credential);
-          const verified = yield* verifyClerkBearerToken(settings, token).pipe(
-            Effect.tapError((error) =>
-              Effect.logWarning("relay clerk token verification failed", {
-                reason: clerkVerificationFailureReason(error.cause),
-              }),
-            ),
-            Effect.catch(() => relayAuthInvalidError("invalid_bearer")),
-          );
-          if (!verified.sub) {
-            return yield* relayAuthInvalidError("invalid_bearer");
-          }
-          yield* Effect.annotateCurrentSpan({ "relay.auth.subject": verified.sub });
-          return yield* httpEffect.pipe(
-            Effect.provideService(RelayClientPrincipal, {
-              userId: verified.sub,
-              token,
+      bearer: Effect.fn("relay.auth.client.bearer")(function* (httpEffect, { credential }) {
+        const token = Redacted.value(credential);
+        const verified = yield* verifyClerkBearerToken(config, token).pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("relay clerk token verification failed", {
+              reason: clerkVerificationFailureReason(error.cause),
             }),
-          );
-        }),
+          ),
+          Effect.catch(() => relayAuthInvalidError("invalid_bearer")),
+        );
+        if (!verified.sub) {
+          return yield* relayAuthInvalidError("invalid_bearer");
+        }
+        yield* Effect.annotateCurrentSpan({ "relay.auth.subject": verified.sub });
+        return yield* httpEffect.pipe(
+          Effect.provideService(RelayClientPrincipal, {
+            userId: verified.sub,
+            token,
+          }),
+        );
+      }),
     };
   }),
 );
@@ -177,22 +181,21 @@ export const relayEnvironmentAuthLayer = Layer.effect(
   Effect.gen(function* () {
     const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
     return {
-      bearer: (httpEffect, { credential }) =>
-        Effect.gen(function* () {
-          const token = Redacted.value(credential);
-          const principal = yield* credentials
-            .authenticate(token)
-            .pipe(Effect.catch(() => relayAuthInvalidError("not_authorized")));
-          if (principal._tag === "None") {
-            return yield* relayAuthInvalidError("not_authorized");
-          }
-          yield* Effect.annotateCurrentSpan({
-            "relay.environment_id": principal.value.environmentId,
-          });
-          return yield* httpEffect.pipe(
-            Effect.provideService(RelayEnvironmentPrincipal, principal.value),
-          );
-        }),
+      bearer: Effect.fn("relay.auth.environment.bearer")(function* (httpEffect, { credential }) {
+        const token = Redacted.value(credential);
+        const principal = yield* credentials
+          .authenticate(token)
+          .pipe(Effect.catch(() => relayAuthInvalidError("not_authorized")));
+        if (principal._tag === "None") {
+          return yield* relayAuthInvalidError("not_authorized");
+        }
+        yield* Effect.annotateCurrentSpan({
+          "relay.environment_id": principal.value.environmentId,
+        });
+        return yield* httpEffect.pipe(
+          Effect.provideService(RelayEnvironmentPrincipal, principal.value),
+        );
+      }),
     };
   }),
 );
@@ -200,37 +203,36 @@ export const relayEnvironmentAuthLayer = Layer.effect(
 export const relayDpopClientAuthLayer = Layer.effect(
   RelayDpopClientAuth,
   Effect.gen(function* () {
-    const settings = yield* Settings.Settings;
+    const config = yield* RelayConfiguration.RelayConfiguration;
     return {
-      relayDpop: (httpEffect, { credential }) =>
-        Effect.gen(function* () {
-          yield* appendRelayDpopChallengeHeader;
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          if (!isDpopAuthorizationHeader(request.headers.authorization)) {
-            return yield* relayAuthInvalidError("invalid_bearer");
-          }
-          // Effect beta.73 exposes arbitrary HTTP schemes but currently leaves
-          // the separating spaces in the decoded credential.
-          const token = Redacted.value(credential).trimStart();
-          const now = yield* DateTime.now;
-          const verified = yield* verifyDpopAccessToken({
-            settings,
+      relayDpop: Effect.fn("relay.auth.dpop_client")(function* (httpEffect, { credential }) {
+        yield* appendRelayDpopChallengeHeader;
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        if (!isDpopAuthorizationHeader(request.headers.authorization)) {
+          return yield* relayAuthInvalidError("invalid_bearer");
+        }
+        // Effect beta.73 exposes arbitrary HTTP schemes but currently leaves
+        // the separating spaces in the decoded credential.
+        const token = Redacted.value(credential).trimStart();
+        const now = yield* DateTime.now;
+        const verified = yield* verifyDpopAccessToken({
+          config,
+          token,
+          nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
+        });
+        if (!verified) {
+          return yield* relayAuthInvalidError("invalid_bearer");
+        }
+        yield* Effect.annotateCurrentSpan({ "relay.auth.subject": verified.sub });
+        return yield* httpEffect.pipe(
+          Effect.provideService(RelayClientPrincipal, {
+            userId: verified.sub,
             token,
-            nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-          });
-          if (!verified) {
-            return yield* relayAuthInvalidError("invalid_bearer");
-          }
-          yield* Effect.annotateCurrentSpan({ "relay.auth.subject": verified.sub });
-          return yield* httpEffect.pipe(
-            Effect.provideService(RelayClientPrincipal, {
-              userId: verified.sub,
-              token,
-              proofKeyThumbprint: verified.cnf.jkt,
-              dpopScopes: verified.scope,
-            }),
-          );
-        }),
+            proofKeyThumbprint: verified.cnf.jkt,
+            dpopScopes: verified.scope,
+          }),
+        );
+      }),
     };
   }),
 );
@@ -239,9 +241,11 @@ export function isDpopAuthorizationHeader(value: string | undefined): boolean {
   return /^DPoP +/iu.test(value ?? "");
 }
 
-export const metadataApi = HttpApiBuilder.group(RelayApi, "metadata", (handlers) =>
-  Effect.gen(function* () {
-    const settings = yield* Settings.Settings;
+export const metadataApi = HttpApiBuilder.group(
+  RelayApi,
+  "metadata",
+  Effect.fnUntraced(function* (handlers) {
+    const settings = yield* RelayConfiguration.RelayConfiguration;
     const issuer = normalizeRelayIssuer(settings.relayIssuer);
     const scopes = [
       RelayEnvironmentConnectScope,
@@ -271,8 +275,10 @@ export const metadataApi = HttpApiBuilder.group(RelayApi, "metadata", (handlers)
   }),
 );
 
-export const healthApi = HttpApiBuilder.group(RelayApi, "health", (handlers) =>
-  Effect.gen(function* () {
+export const healthApi = HttpApiBuilder.group(
+  RelayApi,
+  "health",
+  Effect.fnUntraced(function* (handlers) {
     const db = yield* RelayDb;
     return handlers.handle(
       "health",
@@ -295,8 +301,10 @@ export const healthApi = HttpApiBuilder.group(RelayApi, "health", (handlers) =>
   }),
 );
 
-export const mobileApi = HttpApiBuilder.group(RelayApi, "mobile", (handlers) =>
-  Effect.gen(function* () {
+export const mobileApi = HttpApiBuilder.group(
+  RelayApi,
+  "mobile",
+  Effect.fnUntraced(function* (handlers) {
     const registrations = yield* MobileRegistrations.MobileRegistrations;
     const dpopProofs = yield* DpopProofs.DpopProofReplay;
     return handlers
@@ -307,9 +315,9 @@ export const mobileApi = HttpApiBuilder.group(RelayApi, "mobile", (handlers) =>
           yield* annotateRelayRequest(args.endpoint.name);
           const { userId, token } = yield* RelayClientPrincipal;
           const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration");
-          yield* requireDpopThumbprint(proofKeyThumbprint, dpopProofs, {
+          yield* requireDpopThumbprint(proofKeyThumbprint, {
             expectedAccessToken: token,
-          });
+          }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
           return yield* registrations.registerDevice({ userId, payload });
         }, mapRelayCommonApiErrors("invalid_dpop")),
       )
@@ -320,9 +328,9 @@ export const mobileApi = HttpApiBuilder.group(RelayApi, "mobile", (handlers) =>
           yield* annotateRelayRequest(args.endpoint.name);
           const { userId, token } = yield* RelayClientPrincipal;
           const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration");
-          yield* requireDpopThumbprint(proofKeyThumbprint, dpopProofs, {
+          yield* requireDpopThumbprint(proofKeyThumbprint, {
             expectedAccessToken: token,
-          });
+          }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
           return yield* registrations.registerLiveActivity({ userId, payload });
         }, mapRelayCommonApiErrors("invalid_dpop")),
       )
@@ -333,18 +341,20 @@ export const mobileApi = HttpApiBuilder.group(RelayApi, "mobile", (handlers) =>
           yield* annotateRelayRequest(args.endpoint.name);
           const { userId, token } = yield* RelayClientPrincipal;
           const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration");
-          yield* requireDpopThumbprint(proofKeyThumbprint, dpopProofs, {
+          yield* requireDpopThumbprint(proofKeyThumbprint, {
             expectedAccessToken: token,
-          });
+          }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
           return yield* registrations.unregisterDevice({ userId, deviceId: params.deviceId });
         }, mapRelayCommonApiErrors("invalid_dpop")),
       );
   }),
 );
 
-export const clientApi = HttpApiBuilder.group(RelayApi, "client", (handlers) =>
-  Effect.gen(function* () {
-    const settings = yield* Settings.Settings;
+export const clientApi = HttpApiBuilder.group(
+  RelayApi,
+  "client",
+  Effect.fnUntraced(function* (handlers) {
+    const config = yield* RelayConfiguration.RelayConfiguration;
     const crypto = yield* Crypto.Crypto;
     const linker = yield* EnvironmentLinker.EnvironmentLinker;
     const links = yield* EnvironmentLinks.EnvironmentLinks;
@@ -374,9 +384,9 @@ export const clientApi = HttpApiBuilder.group(RelayApi, "client", (handlers) =>
               environmentId: result.environmentId,
               endpoint: result.endpoint,
               endpointRuntime: result.endpointRuntime,
-              relayIssuer: settings.relayIssuer,
+              relayIssuer: config.relayIssuer,
               environmentCredential: result.environmentCredential,
-              cloudMintPublicKey: settings.cloudMintPublicKey,
+              cloudMintPublicKey: config.cloudMintPublicKey,
             };
           },
           mapRelayCommonApiErrors("not_authorized"),
@@ -443,7 +453,7 @@ export const clientApi = HttpApiBuilder.group(RelayApi, "client", (handlers) =>
             Effect.catch(() => relayInternalErrorResponse("internal_error")),
           );
           const challenge = yield* issueLinkChallengeToken({
-            settings,
+            config,
             userId,
             request: args.payload,
             jti,
@@ -482,9 +492,11 @@ export const clientApi = HttpApiBuilder.group(RelayApi, "client", (handlers) =>
   }),
 );
 
-export const tokenApi = HttpApiBuilder.group(RelayApi, "token", (handlers) =>
-  Effect.gen(function* () {
-    const settings = yield* Settings.Settings;
+export const tokenApi = HttpApiBuilder.group(
+  RelayApi,
+  "token",
+  Effect.fnUntraced(function* (handlers) {
+    const config = yield* RelayConfiguration.RelayConfiguration;
     const crypto = yield* Crypto.Crypto;
     const dpopProofs = yield* DpopProofs.DpopProofReplay;
     return handlers.handle(
@@ -492,7 +504,7 @@ export const tokenApi = HttpApiBuilder.group(RelayApi, "token", (handlers) =>
       Effect.fn("relay.api.token.exchangeDpopAccessToken")(function* (args) {
         yield* appendRelayCredentialResponseHeaders;
         yield* annotateRelayRequest(args.endpoint.name);
-        const issuer = normalizeRelayIssuer(settings.relayIssuer);
+        const issuer = normalizeRelayIssuer(config.relayIssuer);
         const requestedScopes = resolveDpopAccessTokenScopes({
           clientId: args.payload.client_id,
           scope: args.payload.scope,
@@ -501,13 +513,15 @@ export const tokenApi = HttpApiBuilder.group(RelayApi, "token", (handlers) =>
           return yield* new HttpApiError.Unauthorized({});
         }
 
-        const verified = yield* verifyClerkBearerToken(settings, args.payload.subject_token).pipe(
+        const verified = yield* verifyClerkBearerToken(config, args.payload.subject_token).pipe(
           Effect.catch(() => relayAuthInvalidError("invalid_bearer")),
         );
         if (!verified.sub) {
           return yield* relayAuthInvalidError("invalid_bearer");
         }
-        const proofKeyThumbprint = yield* requireDpopProof(dpopProofs);
+        const proofKeyThumbprint = yield* requireDpopProof().pipe(
+          Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs),
+        );
         const now = yield* DateTime.now;
         const expiresAt = DateTime.add(now, { minutes: 5 });
         const jti = yield* crypto.randomUUIDv4.pipe(
@@ -515,7 +529,7 @@ export const tokenApi = HttpApiBuilder.group(RelayApi, "token", (handlers) =>
         );
         return {
           access_token: yield* issueDpopAccessToken({
-            settings,
+            config,
             userId: verified.sub,
             proofKeyThumbprint,
             jti,
@@ -534,8 +548,10 @@ export const tokenApi = HttpApiBuilder.group(RelayApi, "token", (handlers) =>
   }),
 );
 
-export const dpopClientApi = HttpApiBuilder.group(RelayApi, "dpopClient", (handlers) =>
-  Effect.gen(function* () {
+export const dpopClientApi = HttpApiBuilder.group(
+  RelayApi,
+  "dpopClient",
+  Effect.fnUntraced(function* (handlers) {
     const connector = yield* EnvironmentConnector.EnvironmentConnector;
     const dpopProofs = yield* DpopProofs.DpopProofReplay;
     return handlers
@@ -552,11 +568,9 @@ export const dpopClientApi = HttpApiBuilder.group(RelayApi, "dpopClient", (handl
             if (!requestedThumbprint || requestedThumbprint !== proofKeyThumbprint) {
               return yield* new HttpApiError.Unauthorized({});
             }
-            const clientProofKeyThumbprint = yield* requireDpopThumbprint(
-              proofKeyThumbprint,
-              dpopProofs,
-              { expectedAccessToken: token },
-            );
+            const clientProofKeyThumbprint = yield* requireDpopThumbprint(proofKeyThumbprint, {
+              expectedAccessToken: token,
+            }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
             return yield* connector.connect({
               userId,
               environmentId: params.environmentId,
@@ -599,9 +613,9 @@ export const dpopClientApi = HttpApiBuilder.group(RelayApi, "dpopClient", (handl
             yield* annotateRelayRequest(args.endpoint.name);
             const { userId, token } = yield* RelayClientPrincipal;
             const proofKeyThumbprint = yield* requireDpopPrincipalScope("environment:status");
-            yield* requireDpopThumbprint(proofKeyThumbprint, dpopProofs, {
+            yield* requireDpopThumbprint(proofKeyThumbprint, {
               expectedAccessToken: token,
-            });
+            }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
             return yield* connector.status({
               userId,
               environmentId: params.environmentId,
@@ -637,8 +651,10 @@ export const dpopClientApi = HttpApiBuilder.group(RelayApi, "dpopClient", (handl
   }),
 );
 
-export const serverApi = HttpApiBuilder.group(RelayApi, "server", (handlers) =>
-  Effect.gen(function* () {
+export const serverApi = HttpApiBuilder.group(
+  RelayApi,
+  "server",
+  Effect.fnUntraced(function* (handlers) {
     const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
     const publishSignatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
     return handlers.handle(
@@ -730,23 +746,21 @@ const currentTraceId = Effect.currentParentSpan.pipe(
   Effect.orElseSucceed(() => "unavailable"),
 );
 
-function annotateRelayRequest(endpoint: string) {
-  return Effect.gen(function* () {
-    const traceId = yield* currentTraceId;
+const annotateRelayRequest = Effect.fnUntraced(function* (endpoint: string) {
+  const traceId = yield* currentTraceId;
 
-    yield* Effect.addFinalizer((exit) =>
-      exit._tag === "Failure" ? logRelayApiFailure(endpoint, traceId)(exit.cause) : Effect.void,
-    );
-    yield* Effect.annotateLogsScoped({
-      "relay.endpoint": endpoint,
-      traceId,
-    });
-
-    yield* Effect.annotateCurrentSpan({
-      "relay.endpoint": endpoint,
-    });
+  yield* Effect.addFinalizer((exit) =>
+    exit._tag === "Failure" ? logRelayApiFailure(endpoint, traceId)(exit.cause) : Effect.void,
+  );
+  yield* Effect.annotateLogsScoped({
+    "relay.endpoint": endpoint,
+    traceId,
   });
-}
+
+  yield* Effect.annotateCurrentSpan({
+    "relay.endpoint": endpoint,
+  });
+});
 
 function logRelayApiFailure(endpoint: string, traceId: string) {
   return (cause: Cause.Cause<unknown>) =>
@@ -811,37 +825,33 @@ function relayInternalErrorResponse(reason: RelayInternalError["reason"]) {
 }
 
 function mapRelayCommonApiErrors(authReason: RelayAuthInvalidReason) {
+  const mapError = Effect.fnUntraced(function* <E>(error: E) {
+    const traceId = yield* currentTraceId;
+    if (isHttpUnauthorized(error)) {
+      return yield* Effect.fail(
+        new RelayAuthInvalidError({
+          code: "auth_invalid",
+          reason: authReason,
+          traceId,
+        }) as MapRelayCommonApiError<E>,
+      );
+    }
+    if (isRelayCommonPersistenceError(error)) {
+      return yield* Effect.fail(
+        new RelayInternalError({
+          code: "internal_error",
+          reason: "persistence_failed",
+          traceId,
+        }) as MapRelayCommonApiError<E>,
+      );
+    }
+
+    return yield* Effect.fail(error as MapRelayCommonApiError<E>);
+  });
+
   return <A, E, R>(
     effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, MapRelayCommonApiError<E>, R> =>
-    effect.pipe(
-      Effect.catch(
-        (error: E): Effect.Effect<never, MapRelayCommonApiError<E>> =>
-          Effect.gen(function* () {
-            const traceId = yield* currentTraceId;
-            if (isHttpUnauthorized(error)) {
-              return yield* Effect.fail(
-                new RelayAuthInvalidError({
-                  code: "auth_invalid",
-                  reason: authReason,
-                  traceId,
-                }) as MapRelayCommonApiError<E>,
-              );
-            }
-            if (isRelayCommonPersistenceError(error)) {
-              return yield* Effect.fail(
-                new RelayInternalError({
-                  code: "internal_error",
-                  reason: "persistence_failed",
-                  traceId,
-                }) as MapRelayCommonApiError<E>,
-              );
-            }
-
-            return yield* Effect.fail(error as MapRelayCommonApiError<E>);
-          }),
-      ),
-    );
+  ): Effect.Effect<A, MapRelayCommonApiError<E>, R> => effect.pipe(Effect.catch(mapError));
 }
 
 type TaggedErrorTag<E> = Extract<E, { readonly _tag: string }>["_tag"];
@@ -921,85 +931,74 @@ function clerkVerificationFailureReason(cause: unknown): string {
   return "unknown";
 }
 
-function verifyClerkBearerToken(settings: Settings.SettingsShape, token: string) {
+function verifyClerkBearerToken(config: RelayConfiguration.RelayConfigurationShape, token: string) {
   return Effect.tryPromise({
     try: () =>
       verifyToken(token, {
-        secretKey: Redacted.value(settings.clerkSecretKey),
-        audience: normalizeRelayIssuer(settings.relayIssuer),
+        secretKey: Redacted.value(config.clerkSecretKey),
+        audience: normalizeRelayIssuer(config.relayIssuer),
       }),
     catch: (cause) => new ClerkTokenVerificationFailed({ cause }),
   });
 }
 
-function requireDpopPrincipalScope(scope: RelayDpopAccessTokenScope) {
-  return Effect.gen(function* () {
-    const principal = yield* RelayClientPrincipal;
-    if (!principal.proofKeyThumbprint || !principal.dpopScopes?.includes(scope)) {
-      return yield* new HttpApiError.Unauthorized({});
-    }
-    return principal.proofKeyThumbprint;
-  });
-}
+const requireDpopPrincipalScope = Effect.fn("relay.api.require_dpop_principal_scope")(function* (
+  scope: RelayDpopAccessTokenScope,
+) {
+  yield* Effect.annotateCurrentSpan({ "relay.dpop.required_scope": scope });
+  const principal = yield* RelayClientPrincipal;
+  if (!principal.proofKeyThumbprint || !principal.dpopScopes?.includes(scope)) {
+    return yield* new HttpApiError.Unauthorized({});
+  }
+  return principal.proofKeyThumbprint;
+});
 
-function requireDpopThumbprint(
+const requireDpopThumbprint = Effect.fn("relay.api.require_dpop_thumbprint")(function* (
   expectedThumbprint: string,
-  dpopProofs: DpopProofs.DpopProofReplayShape,
   options?: {
     readonly expectedAccessToken?: string;
   },
 ) {
-  return Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const now = yield* DateTime.now;
-    const url = HttpServerRequest.toURL(request);
-    if (url._tag === "None") {
-      return yield* new HttpApiError.Unauthorized({});
-    }
-    return yield* verifyAndConsumeDpopProof({
-      proof: request.headers.dpop,
-      method: request.method,
-      url: url.value.href,
-      now,
-      expectedThumbprint,
-      ...(options?.expectedAccessToken ? { expectedAccessToken: options.expectedAccessToken } : {}),
-      dpopProofs,
-    });
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const now = yield* DateTime.now;
+  const url = HttpServerRequest.toURL(request);
+  if (url._tag === "None") {
+    return yield* new HttpApiError.Unauthorized({});
+  }
+  return yield* verifyAndConsumeDpopProof({
+    proof: request.headers.dpop,
+    method: request.method,
+    url: url.value.href,
+    now,
+    expectedThumbprint,
+    ...(options?.expectedAccessToken ? { expectedAccessToken: options.expectedAccessToken } : {}),
   });
-}
+});
 
-function requireDpopProof(
-  dpopProofs: DpopProofs.DpopProofReplayShape,
-  options?: {
-    readonly expectedAccessToken?: string;
-  },
-) {
-  return Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const now = yield* DateTime.now;
-    const url = HttpServerRequest.toURL(request);
-    if (url._tag === "None") {
-      return yield* new HttpApiError.Unauthorized({});
-    }
-    return yield* verifyAndConsumeDpopProof({
-      proof: request.headers.dpop,
-      method: request.method,
-      url: url.value.href,
-      now,
-      ...(options?.expectedAccessToken ? { expectedAccessToken: options.expectedAccessToken } : {}),
-      dpopProofs,
-    });
+const requireDpopProof = Effect.fn("relay.api.require_dpop_proof")(function* (options?: {
+  readonly expectedAccessToken?: string;
+}) {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const now = yield* DateTime.now;
+  const url = HttpServerRequest.toURL(request);
+  if (url._tag === "None") {
+    return yield* new HttpApiError.Unauthorized({});
+  }
+  return yield* verifyAndConsumeDpopProof({
+    proof: request.headers.dpop,
+    method: request.method,
+    url: url.value.href,
+    now,
+    ...(options?.expectedAccessToken ? { expectedAccessToken: options.expectedAccessToken } : {}),
   });
-}
+});
 
-function relayAuthInvalidError(reason: RelayAuthInvalidReason) {
-  return Effect.gen(function* () {
-    const traceId = yield* currentTraceId;
-    yield* Effect.annotateCurrentSpan({
-      "relay.trace_id": traceId,
-      "relay.error.outbound_tag": "RelayAuthInvalidError",
-      "relay.error.outbound_reason": reason,
-    });
-    return yield* new RelayAuthInvalidError({ code: "auth_invalid", reason, traceId });
+const relayAuthInvalidError = Effect.fnUntraced(function* (reason: RelayAuthInvalidReason) {
+  const traceId = yield* currentTraceId;
+  yield* Effect.annotateCurrentSpan({
+    "relay.trace_id": traceId,
+    "relay.error.outbound_tag": "RelayAuthInvalidError",
+    "relay.error.outbound_reason": reason,
   });
-}
+  return yield* new RelayAuthInvalidError({ code: "auth_invalid", reason, traceId });
+});

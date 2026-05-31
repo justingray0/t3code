@@ -24,7 +24,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import * as EnvironmentLinks from "../persistence/EnvironmentLinks.ts";
-import * as Settings from "../settings.ts";
+import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentConnector from "./EnvironmentConnector.ts";
 
 const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
@@ -42,7 +42,7 @@ const otherEnvironmentKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
   publicKeyEncoding: { format: "pem", type: "spki" },
 });
 
-const settings = Settings.Settings.of({
+const settings = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
   apns: {
     environment: "sandbox",
@@ -148,7 +148,7 @@ function connectorTestLayer(
   return EnvironmentConnector.layer.pipe(
     Layer.provide(NodeCryptoLayer.layer),
     Layer.provide(Layer.succeed(EnvironmentLinks.EnvironmentLinks, options?.links ?? makeLinks())),
-    Layer.provide(Layer.succeed(Settings.Settings, settings)),
+    Layer.provide(Layer.succeed(RelayConfiguration.RelayConfiguration, settings)),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute))),
   );
 }

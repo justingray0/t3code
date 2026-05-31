@@ -14,7 +14,7 @@ import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 
 import * as DpopProofs from "../persistence/DpopProofs.ts";
-import * as Settings from "../settings.ts";
+import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentPublishSignatures from "./EnvironmentPublishSignatures.ts";
 import { environmentPublishReplayThumbprint } from "./EnvironmentPublishSignatures.ts";
 
@@ -22,7 +22,7 @@ const keyPair = NodeCrypto.generateKeyPairSync("ed25519", {
   privateKeyEncoding: { format: "pem", type: "pkcs8" },
   publicKeyEncoding: { format: "pem", type: "spki" },
 });
-const settings = Settings.Settings.of({
+const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
   apns: {
     environment: "sandbox",
@@ -84,10 +84,10 @@ function layer(replay?: Partial<DpopProofs.DpopProofReplayShape>) {
   return EnvironmentPublishSignatures.layer.pipe(
     Layer.provide(
       Layer.merge(
-        Layer.succeed(Settings.Settings, settings),
+        Layer.succeed(RelayConfiguration.RelayConfiguration, config),
         Layer.succeed(DpopProofs.DpopProofReplay, {
-          consume: () => Effect.succeed(true),
-          ...replay,
+          consume: replay?.consume ?? (() => Effect.succeed(true)),
+          pruneExpired: replay?.pruneExpired ?? Effect.void,
         }),
       ),
     ),

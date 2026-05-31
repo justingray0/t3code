@@ -39,8 +39,11 @@ const make = Effect.gen(function* () {
   const db = yield* RelayDb;
 
   return Devices.of({
-    register: (input) =>
-      Effect.gen(function* () {
+    register: Effect.fn("relay.devices.register")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({
+          "relay.mobile.device_id": input.registration.deviceId,
+        });
         const updatedAt = DateTime.formatIso(yield* DateTime.now);
         const registration = input.registration;
 
@@ -91,29 +94,36 @@ const make = Effect.gen(function* () {
               updatedAt,
             },
           });
-      }).pipe(Effect.mapError((cause) => new DeviceRegistrationPersistenceError({ cause }))),
-    unregister: (input) =>
-      Effect.all(
-        [
-          db
-            .delete(relayLiveActivities)
-            .where(
-              and(
-                eq(relayLiveActivities.userId, input.userId),
-                eq(relayLiveActivities.deviceId, input.deviceId),
+      },
+      Effect.mapError((cause) => new DeviceRegistrationPersistenceError({ cause })),
+    ),
+    unregister: Effect.fn("relay.devices.unregister")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({ "relay.mobile.device_id": input.deviceId });
+        yield* Effect.all(
+          [
+            db
+              .delete(relayLiveActivities)
+              .where(
+                and(
+                  eq(relayLiveActivities.userId, input.userId),
+                  eq(relayLiveActivities.deviceId, input.deviceId),
+                ),
               ),
-            ),
-          db
-            .delete(relayMobileDevices)
-            .where(
-              and(
-                eq(relayMobileDevices.userId, input.userId),
-                eq(relayMobileDevices.deviceId, input.deviceId),
+            db
+              .delete(relayMobileDevices)
+              .where(
+                and(
+                  eq(relayMobileDevices.userId, input.userId),
+                  eq(relayMobileDevices.deviceId, input.deviceId),
+                ),
               ),
-            ),
-        ],
-        { concurrency: 2, discard: true },
-      ).pipe(Effect.mapError((cause) => new DeviceUnregistrationPersistenceError({ cause }))),
+          ],
+          { concurrency: 2, discard: true },
+        );
+      },
+      Effect.mapError((cause) => new DeviceUnregistrationPersistenceError({ cause })),
+    ),
   });
 });
 

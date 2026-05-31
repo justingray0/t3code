@@ -5,7 +5,7 @@ import { signRelayJwt } from "@t3tools/shared/relayJwt";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
-import * as Settings from "./settings.ts";
+import * as RelayConfiguration from "./Config.ts";
 import {
   issueDpopAccessToken,
   issueLinkChallengeToken,
@@ -19,7 +19,7 @@ const keyPair = NodeCrypto.generateKeyPairSync("ed25519", {
   publicKeyEncoding: { format: "pem", type: "spki" },
 });
 
-const settings = Settings.Settings.of({
+const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test/",
   apns: {
     environment: "sandbox",
@@ -42,7 +42,7 @@ describe("relay tokens", () => {
   it("issues a user-bound environment link challenge", async () => {
     const token = await Effect.runPromise(
       issueLinkChallengeToken({
-        settings,
+        config,
         userId: "user_123",
         request: {
           notificationsEnabled: true,
@@ -58,7 +58,7 @@ describe("relay tokens", () => {
     expect(
       await Effect.runPromise(
         verifyLinkChallengeToken({
-          settings,
+          config,
           token,
           userId: "user_123",
           request: {
@@ -73,7 +73,7 @@ describe("relay tokens", () => {
     expect(
       await Effect.runPromise(
         verifyLinkChallengeToken({
-          settings,
+          config,
           token,
           userId: "attacker",
           request: {
@@ -90,7 +90,7 @@ describe("relay tokens", () => {
   it("issues and verifies DPoP access tokens bound to one proof-key thumbprint", async () => {
     const token = await Effect.runPromise(
       issueDpopAccessToken({
-        settings,
+        config,
         userId: "user_123",
         proofKeyThumbprint: "proof-key-thumbprint",
         jti: "access-token-1",
@@ -102,7 +102,7 @@ describe("relay tokens", () => {
     );
 
     expect(
-      await Effect.runPromise(verifyDpopAccessToken({ settings, token, nowEpochSeconds: 150 })),
+      await Effect.runPromise(verifyDpopAccessToken({ config, token, nowEpochSeconds: 150 })),
     ).toMatchObject({
       sub: "user_123",
       cnf: { jkt: "proof-key-thumbprint" },
@@ -110,14 +110,14 @@ describe("relay tokens", () => {
       scope: ["environment:connect", "environment:status", "mobile:registration"],
     });
     expect(
-      await Effect.runPromise(verifyDpopAccessToken({ settings, token, nowEpochSeconds: 261 })),
+      await Effect.runPromise(verifyDpopAccessToken({ config, token, nowEpochSeconds: 261 })),
     ).toBeNull();
   });
 
   it("issues tunnel-only DPoP access tokens to web public clients", async () => {
     const token = await Effect.runPromise(
       issueDpopAccessToken({
-        settings,
+        config,
         userId: "user_123",
         proofKeyThumbprint: "web-proof-key-thumbprint",
         jti: "web-access-token-1",
@@ -129,7 +129,7 @@ describe("relay tokens", () => {
     );
 
     expect(
-      await Effect.runPromise(verifyDpopAccessToken({ settings, token, nowEpochSeconds: 150 })),
+      await Effect.runPromise(verifyDpopAccessToken({ config, token, nowEpochSeconds: 150 })),
     ).toMatchObject({
       client_id: "t3-web",
       scope: ["environment:connect", "environment:status"],
@@ -166,7 +166,7 @@ describe("relay tokens", () => {
     );
 
     expect(
-      await Effect.runPromise(verifyDpopAccessToken({ settings, token, nowEpochSeconds: 150 })),
+      await Effect.runPromise(verifyDpopAccessToken({ config, token, nowEpochSeconds: 150 })),
     ).toBeNull();
   });
 
@@ -190,7 +190,7 @@ describe("relay tokens", () => {
     );
 
     expect(
-      await Effect.runPromise(verifyDpopAccessToken({ settings, token, nowEpochSeconds: 150 })),
+      await Effect.runPromise(verifyDpopAccessToken({ config, token, nowEpochSeconds: 150 })),
     ).toBeNull();
   });
 });

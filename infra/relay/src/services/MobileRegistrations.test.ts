@@ -15,7 +15,7 @@ import * as AgentActivityRows from "../persistence/AgentActivityRows.ts";
 import * as DeliveryAttempts from "../persistence/DeliveryAttempts.ts";
 import * as EnvironmentLinks from "../persistence/EnvironmentLinks.ts";
 import * as LiveActivities from "../persistence/LiveActivities.ts";
-import * as Settings from "../settings.ts";
+import * as RelayConfiguration from "../Config.ts";
 import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
@@ -115,7 +115,7 @@ function makeDeliveryAttempts(
   };
 }
 
-const settings = Settings.Settings.of({
+const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
   apns: {
     environment: "sandbox",
@@ -150,7 +150,7 @@ function makeRegistrationReplayLayer(input: {
         Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
         Layer.succeed(LiveActivities.LiveActivities, input.liveActivities),
         Layer.succeed(DeliveryAttempts.DeliveryAttempts, makeDeliveryAttempts()),
-        Layer.succeed(Settings.Settings, settings),
+        Layer.succeed(RelayConfiguration.RelayConfiguration, config),
         Layer.succeed(ApnsDeliveryQueue.ApnsDeliveryQueueSender, {
           send: (body) =>
             Effect.sync(() => {

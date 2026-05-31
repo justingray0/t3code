@@ -19,7 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as DpopProofs from "../persistence/DpopProofs.ts";
-import * as Settings from "../settings.ts";
+import * as RelayConfiguration from "../Config.ts";
 
 export class EnvironmentPublishSignatureExpired extends Data.TaggedError(
   "EnvironmentPublishSignatureExpired",
@@ -90,84 +90,86 @@ export function environmentPublishReplayThumbprint(input: {
 
 const make = Effect.gen(function* () {
   const proofReplay = yield* DpopProofs.DpopProofReplay;
-  const settings = yield* Settings.Settings;
+  const config = yield* RelayConfiguration.RelayConfiguration;
   const crypto = yield* Crypto.Crypto;
 
   return EnvironmentPublishSignatures.of({
-    verify: (input) =>
-      Effect.gen(function* () {
-        const now = yield* DateTime.now;
-        const decoded = yield* Effect.try({
-          try: () => decodeRelayJwt(input.request.proof),
-          catch: () =>
-            new EnvironmentPublishSignatureInvalid({ environmentId: input.environmentId }),
+    verify: Effect.fn("relay.environment_publish_signatures.verify")(function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "relay.environment_id": input.environmentId,
+        "relay.thread_id": input.threadId,
+      });
+      const now = yield* DateTime.now;
+      const decoded = yield* Effect.try({
+        try: () => decodeRelayJwt(input.request.proof),
+        catch: () => new EnvironmentPublishSignatureInvalid({ environmentId: input.environmentId }),
+      });
+      if (
+        typeof decoded.exp === "number" &&
+        decoded.exp <= Math.floor(now.epochMilliseconds / 1_000)
+      ) {
+        return yield* new EnvironmentPublishSignatureExpired({
+          expiresAt: DateTime.formatIso(DateTime.makeUnsafe(decoded.exp * 1_000)),
         });
-        if (
-          typeof decoded.exp === "number" &&
-          decoded.exp <= Math.floor(now.epochMilliseconds / 1_000)
-        ) {
-          return yield* new EnvironmentPublishSignatureExpired({
-            expiresAt: DateTime.formatIso(DateTime.makeUnsafe(decoded.exp * 1_000)),
-          });
-        }
-        const proof = yield* verifyRelayJwt({
-          publicKey: input.environmentPublicKey,
-          token: input.request.proof,
-          typ: RELAY_ACTIVITY_PUBLISH_TYP,
-          issuer: `t3-env:${input.environmentId}`,
-          audience: normalizeRelayIssuer(settings.relayIssuer),
-          nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-        }).pipe(
-          Effect.flatMap(decodeProof),
+      }
+      const proof = yield* verifyRelayJwt({
+        publicKey: input.environmentPublicKey,
+        token: input.request.proof,
+        typ: RELAY_ACTIVITY_PUBLISH_TYP,
+        issuer: `t3-env:${input.environmentId}`,
+        audience: normalizeRelayIssuer(config.relayIssuer),
+        nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
+      }).pipe(
+        Effect.flatMap(decodeProof),
+        Effect.mapError(
+          () => new EnvironmentPublishSignatureInvalid({ environmentId: input.environmentId }),
+        ),
+      );
+      if (
+        proof.environmentId !== input.environmentId ||
+        proof.threadId !== input.threadId ||
+        proof.sub !== input.environmentId ||
+        stableStringify(proof.state) !== stableStringify(input.request.state) ||
+        (input.request.state !== null &&
+          (input.request.state.environmentId !== input.environmentId ||
+            input.request.state.threadId !== input.threadId))
+      ) {
+        return yield* new EnvironmentPublishSignatureInvalid({
+          environmentId: input.environmentId,
+        });
+      }
+      const expiresAt = DateTime.make(proof.exp * 1_000);
+      if (expiresAt._tag === "None") {
+        return yield* new EnvironmentPublishSignatureInvalid({
+          environmentId: input.environmentId,
+        });
+      }
+      const thumbprint = yield* crypto
+        .digest(
+          "SHA-256",
+          environmentPublishReplayThumbprintData({
+            environmentId: input.environmentId,
+            environmentPublicKey: input.environmentPublicKey,
+          }),
+        )
+        .pipe(
+          Effect.map(formatEnvironmentPublishReplayThumbprint),
           Effect.mapError(
             () => new EnvironmentPublishSignatureInvalid({ environmentId: input.environmentId }),
           ),
         );
-        if (
-          proof.environmentId !== input.environmentId ||
-          proof.threadId !== input.threadId ||
-          proof.sub !== input.environmentId ||
-          stableStringify(proof.state) !== stableStringify(input.request.state) ||
-          (input.request.state !== null &&
-            (input.request.state.environmentId !== input.environmentId ||
-              input.request.state.threadId !== input.threadId))
-        ) {
-          return yield* new EnvironmentPublishSignatureInvalid({
-            environmentId: input.environmentId,
-          });
-        }
-        const expiresAt = DateTime.make(proof.exp * 1_000);
-        if (expiresAt._tag === "None") {
-          return yield* new EnvironmentPublishSignatureInvalid({
-            environmentId: input.environmentId,
-          });
-        }
-        const thumbprint = yield* crypto
-          .digest(
-            "SHA-256",
-            environmentPublishReplayThumbprintData({
-              environmentId: input.environmentId,
-              environmentPublicKey: input.environmentPublicKey,
-            }),
-          )
-          .pipe(
-            Effect.map(formatEnvironmentPublishReplayThumbprint),
-            Effect.mapError(
-              () => new EnvironmentPublishSignatureInvalid({ environmentId: input.environmentId }),
-            ),
-          );
-        const consumedNonce = yield* proofReplay.consume({
-          thumbprint,
-          jti: proof.jti,
-          iat: proof.iat,
-          expiresAt: expiresAt.value,
+      const consumedNonce = yield* proofReplay.consume({
+        thumbprint,
+        jti: proof.jti,
+        iat: proof.iat,
+        expiresAt: expiresAt.value,
+      });
+      if (!consumedNonce) {
+        return yield* new EnvironmentPublishSignatureInvalid({
+          environmentId: input.environmentId,
         });
-        if (!consumedNonce) {
-          return yield* new EnvironmentPublishSignatureInvalid({
-            environmentId: input.environmentId,
-          });
-        }
-      }),
+      }
+    }),
   });
 });
 

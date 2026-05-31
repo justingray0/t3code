@@ -87,8 +87,9 @@ describe("DpopProofReplay", () => {
     } as unknown as RelayDatabase;
 
     return Effect.gen(function* () {
-      yield* DpopProofs.pruneExpired(fakeDb);
+      const replay = yield* DpopProofs.DpopProofReplay;
+      yield* replay.pruneExpired;
       expect(calls).toEqual(["delete", "delete.where"]);
-    });
+    }).pipe(Effect.provide(DpopProofs.layer.pipe(Layer.provide(Layer.succeed(RelayDb, fakeDb)))));
   });
 });

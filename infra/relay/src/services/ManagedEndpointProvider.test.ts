@@ -7,10 +7,10 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
-import * as Settings from "../settings.ts";
+import * as RelayConfiguration from "../Config.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 
-const settings = Settings.Settings.of({
+const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
   apns: {
     environment: "sandbox",
@@ -148,7 +148,7 @@ describe("ManagedEndpointProvider", () => {
       Effect.provide(
         ManagedEndpointProvider.layer.pipe(
           Layer.provideMerge(NodeServices.layer),
-          Layer.provide(Layer.succeed(Settings.Settings, settings)),
+          Layer.provide(Layer.succeed(RelayConfiguration.RelayConfiguration, config)),
           Layer.provide(Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute))),
         ),
       ),
@@ -249,7 +249,7 @@ describe("ManagedEndpointProvider", () => {
         Effect.provide(
           ManagedEndpointProvider.layer.pipe(
             Layer.provideMerge(NodeServices.layer),
-            Layer.provide(Layer.succeed(Settings.Settings, settings)),
+            Layer.provide(Layer.succeed(RelayConfiguration.RelayConfiguration, config)),
             Layer.provide(Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute))),
           ),
         ),
@@ -324,7 +324,7 @@ describe("ManagedEndpointProvider", () => {
       Effect.provide(
         ManagedEndpointProvider.layer.pipe(
           Layer.provideMerge(NodeServices.layer),
-          Layer.provide(Layer.succeed(Settings.Settings, settings)),
+          Layer.provide(Layer.succeed(RelayConfiguration.RelayConfiguration, config)),
           Layer.provide(Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute))),
         ),
       ),
@@ -360,7 +360,7 @@ describe("ManagedEndpointProvider", () => {
       Effect.provide(
         ManagedEndpointProvider.layer.pipe(
           Layer.provideMerge(NodeServices.layer),
-          Layer.provide(Layer.succeed(Settings.Settings, settings)),
+          Layer.provide(Layer.succeed(RelayConfiguration.RelayConfiguration, config)),
           Layer.provide(Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute))),
         ),
       ),
@@ -396,7 +396,7 @@ describe("ManagedEndpointProvider", () => {
       Effect.provide(
         ManagedEndpointProvider.layer.pipe(
           Layer.provideMerge(NodeServices.layer),
-          Layer.provide(Layer.succeed(Settings.Settings, settings)),
+          Layer.provide(Layer.succeed(RelayConfiguration.RelayConfiguration, config)),
           Layer.provide(Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute))),
         ),
       ),
@@ -437,7 +437,7 @@ describe("ManagedEndpointProvider", () => {
       Effect.provide(
         ManagedEndpointProvider.layer.pipe(
           Layer.provideMerge(NodeServices.layer),
-          Layer.provide(Layer.succeed(Settings.Settings, settings)),
+          Layer.provide(Layer.succeed(RelayConfiguration.RelayConfiguration, config)),
           Layer.provide(Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute))),
         ),
       ),

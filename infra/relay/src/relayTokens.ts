@@ -14,7 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
-import type * as Settings from "./settings.ts";
+import * as RelayConfiguration from "./Config.ts";
 
 const LINK_CHALLENGE_TYP = "t3-link-challenge+jwt";
 const ACCESS_TOKEN_TYP = "t3-relay-dpop-access+jwt";
@@ -75,16 +75,16 @@ export function resolveDpopAccessTokenScopes(input: {
 }
 
 export function issueLinkChallengeToken(input: {
-  readonly settings: Settings.SettingsShape;
+  readonly config: RelayConfiguration.RelayConfigurationShape;
   readonly userId: string;
   readonly request: RelayEnvironmentLinkChallengeRequest;
   readonly jti: string;
   readonly issuedAtEpochSeconds: number;
   readonly expiresAtEpochSeconds: number;
 }) {
-  const issuer = normalizeRelayIssuer(input.settings.relayIssuer);
+  const issuer = normalizeRelayIssuer(input.config.relayIssuer);
   return signRelayJwt({
-    privateKey: Redacted.value(input.settings.cloudMintPrivateKey),
+    privateKey: Redacted.value(input.config.cloudMintPrivateKey),
     typ: LINK_CHALLENGE_TYP,
     payload: {
       kind: LINK_CHALLENGE_KIND,
@@ -100,15 +100,15 @@ export function issueLinkChallengeToken(input: {
 }
 
 export function verifyLinkChallengeToken(input: {
-  readonly settings: Settings.SettingsShape;
+  readonly config: RelayConfiguration.RelayConfigurationShape;
   readonly token: string;
   readonly userId: string;
   readonly request: RelayEnvironmentLinkChallengeRequest;
   readonly nowEpochSeconds: number;
 }) {
-  const issuer = normalizeRelayIssuer(input.settings.relayIssuer);
+  const issuer = normalizeRelayIssuer(input.config.relayIssuer);
   return verifyRelayJwt({
-    publicKey: input.settings.cloudMintPublicKey,
+    publicKey: input.config.cloudMintPublicKey,
     token: input.token,
     typ: LINK_CHALLENGE_TYP,
     issuer,
@@ -132,7 +132,7 @@ export function verifyLinkChallengeToken(input: {
 }
 
 export function issueDpopAccessToken(input: {
-  readonly settings: Settings.SettingsShape;
+  readonly config: RelayConfiguration.RelayConfigurationShape;
   readonly userId: string;
   readonly proofKeyThumbprint: string;
   readonly jti: string;
@@ -141,9 +141,9 @@ export function issueDpopAccessToken(input: {
   readonly clientId: RelayPublicClientId;
   readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
 }) {
-  const issuer = normalizeRelayIssuer(input.settings.relayIssuer);
+  const issuer = normalizeRelayIssuer(input.config.relayIssuer);
   return signRelayJwt({
-    privateKey: Redacted.value(input.settings.cloudMintPrivateKey),
+    privateKey: Redacted.value(input.config.cloudMintPrivateKey),
     typ: ACCESS_TOKEN_TYP,
     payload: {
       iss: issuer,
@@ -160,13 +160,13 @@ export function issueDpopAccessToken(input: {
 }
 
 export function verifyDpopAccessToken(input: {
-  readonly settings: Settings.SettingsShape;
+  readonly config: RelayConfiguration.RelayConfigurationShape;
   readonly token: string;
   readonly nowEpochSeconds: number;
 }) {
-  const issuer = normalizeRelayIssuer(input.settings.relayIssuer);
+  const issuer = normalizeRelayIssuer(input.config.relayIssuer);
   return verifyRelayJwt({
-    publicKey: input.settings.cloudMintPublicKey,
+    publicKey: input.config.cloudMintPublicKey,
     token: input.token,
     typ: ACCESS_TOKEN_TYP,
     issuer,
@@ -174,15 +174,13 @@ export function verifyDpopAccessToken(input: {
     nowEpochSeconds: input.nowEpochSeconds,
   }).pipe(
     Effect.flatMap(decodeDpopAccessTokenClaims),
-    Effect.map((claims) => {
+    Effect.map((claims): RelayDpopAccessTokenClaims | null => {
       const scopes = resolveDpopAccessTokenScopes({
         clientId: claims.client_id,
         scope: claims.scope,
       });
-      return scopes === null
-        ? null
-        : ({ ...claims, scope: scopes } satisfies RelayDpopAccessTokenClaims);
+      return scopes === null ? null : { ...claims, scope: scopes };
     }),
-    Effect.catch(() => Effect.succeed(null)),
+    Effect.orElseSucceed(() => null),
   );
 }

@@ -17,7 +17,7 @@ import {
   type ApnsDeliveryJobPayload,
   type SignedApnsDeliveryJob,
 } from "../apnsDeliveryJobs.ts";
-import * as Settings from "../settings.ts";
+import * as RelayConfiguration from "../Config.ts";
 
 export class ApnsDeliveryQueueSendError extends Data.TaggedError("ApnsDeliveryQueueSendError")<{
   readonly cause: unknown;
@@ -57,11 +57,15 @@ export class ApnsDeliveryQueue extends Context.Service<ApnsDeliveryQueue, ApnsDe
 const make = Effect.gen(function* () {
   const sender = yield* ApnsDeliveryQueueSender;
   const crypto = yield* Crypto.Crypto;
-  const settings = yield* Settings.Settings;
+  const config = yield* RelayConfiguration.RelayConfiguration;
 
   return ApnsDeliveryQueue.of({
-    enqueueLiveActivity: (input) =>
-      Effect.gen(function* () {
+    enqueueLiveActivity: Effect.fn("relay.apns_delivery_queue.enqueue_live_activity")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({
+          "relay.mobile.device_id": input.deviceId,
+          "relay.delivery.kind": input.kind,
+        });
         const now = yield* DateTime.now;
         const jobId = yield* crypto.randomUUIDv4.pipe(
           Effect.mapError((cause) => new ApnsDeliveryQueueSendError({ cause })),
@@ -75,7 +79,7 @@ const make = Effect.gen(function* () {
           expiresAt: expiresAtForJob(now.epochMilliseconds),
         });
         const signed = signApnsDeliveryJob({
-          secret: settings.apnsDeliveryJobSigningSecret,
+          secret: config.apnsDeliveryJobSigningSecret,
           payload,
         });
         yield* sender.send(signed);
@@ -88,9 +92,14 @@ const make = Effect.gen(function* () {
           apnsReason: null,
           apnsId: null,
         };
-      }),
-    enqueuePushNotification: (input) =>
-      Effect.gen(function* () {
+      },
+    ),
+    enqueuePushNotification: Effect.fn("relay.apns_delivery_queue.enqueue_push_notification")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({
+          "relay.mobile.device_id": input.deviceId,
+          "relay.delivery.kind": "push_notification",
+        });
         const now = yield* DateTime.now;
         const jobId = yield* crypto.randomUUIDv4.pipe(
           Effect.mapError((cause) => new ApnsDeliveryQueueSendError({ cause })),
@@ -107,7 +116,7 @@ const make = Effect.gen(function* () {
           expiresAt: expiresAtForJob(now.epochMilliseconds),
         });
         const signed = signApnsDeliveryJob({
-          secret: settings.apnsDeliveryJobSigningSecret,
+          secret: config.apnsDeliveryJobSigningSecret,
           payload,
         });
         yield* sender.send(signed);
@@ -120,7 +129,8 @@ const make = Effect.gen(function* () {
           apnsReason: null,
           apnsId: null,
         };
-      }),
+      },
+    ),
   });
 });
 

@@ -125,8 +125,9 @@ const make = Effect.gen(function* () {
   const db = yield* RelayDb;
 
   return EnvironmentLinks.of({
-    upsert: (input) =>
-      Effect.gen(function* () {
+    upsert: Effect.fn("relay.environment_links.upsert")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.proof.environmentId });
         const now = DateTime.formatIso(yield* DateTime.now);
         const { request, proof } = input;
         const environmentId = proof.environmentId;
@@ -165,20 +166,29 @@ const make = Effect.gen(function* () {
               updatedAt: now,
             },
           });
-      }).pipe(Effect.mapError((cause) => new EnvironmentLinkUpsertPersistenceError({ cause }))),
+      },
+      Effect.mapError((cause) => new EnvironmentLinkUpsertPersistenceError({ cause })),
+    ),
 
-    listUsersForEnvironment: (input) =>
-      db
-        .select({ userId: relayEnvironmentLinks.userId })
-        .from(relayEnvironmentLinks)
-        .where(agentAwarenessDeliveryUserCondition(input.environmentId))
-        .pipe(
-          Effect.map((rows) => rows.map((row) => row.userId)),
-          Effect.mapError((cause) => new EnvironmentLinkUserListPersistenceError({ cause })),
-        ),
+    listUsersForEnvironment: Effect.fn("relay.environment_links.list_users_for_environment")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
+        return yield* db
+          .select({ userId: relayEnvironmentLinks.userId })
+          .from(relayEnvironmentLinks)
+          .where(agentAwarenessDeliveryUserCondition(input.environmentId))
+          .pipe(
+            Effect.map((rows) => rows.map((row) => row.userId)),
+            Effect.mapError((cause) => new EnvironmentLinkUserListPersistenceError({ cause })),
+          );
+      },
+    ),
 
-    listDeliveryUsersForEnvironment: (input) =>
-      db
+    listDeliveryUsersForEnvironment: Effect.fn(
+      "relay.environment_links.list_delivery_users_for_environment",
+    )(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
+      return yield* db
         .select({
           userId: relayEnvironmentLinks.userId,
           notificationsEnabled: relayEnvironmentLinks.notificationsEnabled,
@@ -195,10 +205,14 @@ const make = Effect.gen(function* () {
             })),
           ),
           Effect.mapError((cause) => new EnvironmentLinkUserListPersistenceError({ cause })),
-        ),
+        );
+    }),
 
-    listPublicKeysForEnvironment: (input) =>
-      db
+    listPublicKeysForEnvironment: Effect.fn(
+      "relay.environment_links.list_public_keys_for_environment",
+    )(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
+      return yield* db
         .select({ environmentPublicKey: relayEnvironmentLinks.environmentPublicKey })
         .from(relayEnvironmentLinks)
         .where(
@@ -212,10 +226,11 @@ const make = Effect.gen(function* () {
             ...new Set(rows.map((row) => row.environmentPublicKey).filter((key) => key.length > 0)),
           ]),
           Effect.mapError((cause) => new EnvironmentPublicKeyListPersistenceError({ cause })),
-        ),
+        );
+    }),
 
-    listForUser: (input) =>
-      db
+    listForUser: Effect.fn("relay.environment_links.list_for_user")(function* (input) {
+      return yield* db
         .select({
           environmentId: relayEnvironmentLinks.environmentId,
           environmentLabel: relayEnvironmentLinks.environmentLabel,
@@ -247,10 +262,12 @@ const make = Effect.gen(function* () {
             })),
           ),
           Effect.mapError((cause) => new EnvironmentLinkListPersistenceError({ cause })),
-        ),
+        );
+    }),
 
-    getForUser: (input) =>
-      db
+    getForUser: Effect.fn("relay.environment_links.get_for_user")(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
+      return yield* db
         .select({
           environmentId: relayEnvironmentLinks.environmentId,
           environmentLabel: relayEnvironmentLinks.environmentLabel,
@@ -291,10 +308,12 @@ const make = Effect.gen(function* () {
               : null;
           }),
           Effect.mapError((cause) => new EnvironmentLinkLookupPersistenceError({ cause })),
-        ),
+        );
+    }),
 
-    revokeForUser: (input) =>
-      Effect.gen(function* () {
+    revokeForUser: Effect.fn("relay.environment_links.revoke_for_user")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
         const revokedAt = DateTime.formatIso(yield* DateTime.now);
         const rows = yield* db
           .update(relayEnvironmentLinks)
@@ -311,7 +330,9 @@ const make = Effect.gen(function* () {
           )
           .returning({ environmentId: relayEnvironmentLinks.environmentId });
         return rows.length > 0;
-      }).pipe(Effect.mapError((cause) => new EnvironmentLinkRevokePersistenceError({ cause }))),
+      },
+      Effect.mapError((cause) => new EnvironmentLinkRevokePersistenceError({ cause })),
+    ),
   });
 });
 

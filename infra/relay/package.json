@@ -5,8 +5,6 @@
   "scripts": {
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
-    "smoke:apns": "bun run src/smoke/apnsDelivery.ts",
-    "smoke:managed-endpoint": "bun run src/smoke/managedEndpointConnect.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

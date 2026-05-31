@@ -97,14 +97,18 @@ const make = Effect.gen(function* () {
   };
 
   return DeliveryAttempts.of({
-    record: (input) =>
-      Effect.gen(function* () {
+    record: Effect.fn("relay.delivery_attempts.record")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({ "relay.delivery.kind": input.kind });
         const id = yield* crypto.randomUUIDv4;
         const createdAt = DateTime.formatIso(yield* DateTime.now);
         yield* db.insert(relayDeliveryAttempts).values(insertValues(input, id, createdAt));
-      }).pipe(Effect.mapError((cause) => new DeliveryAttemptRecordPersistenceError({ cause }))),
-    claimSourceJob: (input) =>
-      Effect.gen(function* () {
+      },
+      Effect.mapError((cause) => new DeliveryAttemptRecordPersistenceError({ cause })),
+    ),
+    claimSourceJob: Effect.fn("relay.delivery_attempts.claim_source_job")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({ "relay.delivery.kind": input.kind });
         const id = yield* crypto.randomUUIDv4;
         const now = yield* DateTime.now;
         const createdAt = DateTime.formatIso(now);
@@ -161,9 +165,11 @@ const make = Effect.gen(function* () {
           )
           .returning({ id: relayDeliveryAttempts.id });
         return reclaimed.length > 0 ? "claimed" : "in_flight";
-      }).pipe(Effect.mapError((cause) => new DeliveryAttemptRecordPersistenceError({ cause }))),
-    completeSourceJob: (input) =>
-      Effect.gen(function* () {
+      },
+      Effect.mapError((cause) => new DeliveryAttemptRecordPersistenceError({ cause })),
+    ),
+    completeSourceJob: Effect.fn("relay.delivery_attempts.complete_source_job")(
+      function* (input) {
         const completedAt = DateTime.formatIso(yield* DateTime.now);
         yield* db
           .update(relayDeliveryAttempts)
@@ -175,7 +181,9 @@ const make = Effect.gen(function* () {
             transportError: input.transportError ?? null,
           })
           .where(eq(relayDeliveryAttempts.sourceJobId, input.sourceJobId));
-      }).pipe(Effect.mapError((cause) => new DeliveryAttemptRecordPersistenceError({ cause }))),
+      },
+      Effect.mapError((cause) => new DeliveryAttemptRecordPersistenceError({ cause })),
+    ),
   });
 });
 

@@ -14,7 +14,7 @@ import {
   type HttpBody,
   type HttpClientError,
 } from "effect/unstable/http";
-import type { ApnsCredentials } from "./settings.ts";
+import type { ApnsCredentials } from "./Config.ts";
 import type { ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
 
 const LIVE_ACTIVITY_NAME = "AgentActivity";
@@ -193,12 +193,13 @@ function apnsReasonFromBody(body: string): string | undefined {
   });
 }
 
-export function sendLiveActivityRequest(input: {
-  readonly credentials: ApnsCredentials;
-  readonly request: ApnsLiveActivityRequest;
-  readonly issuedAtUnixSeconds: number;
-}): Effect.Effect<ApnsDeliveryResult, ApnsError, HttpClient.HttpClient> {
-  return Effect.gen(function* () {
+export const sendLiveActivityRequest = Effect.fn("relay.apns.send_live_activity_request")(
+  function* (input: {
+    readonly credentials: ApnsCredentials;
+    readonly request: ApnsLiveActivityRequest;
+    readonly issuedAtUnixSeconds: number;
+  }) {
+    yield* Effect.annotateCurrentSpan({ "relay.apns.event": input.request.event });
     const jwt = yield* makeApnsJwt({
       ...input.credentials,
       issuedAtUnixSeconds: input.issuedAtUnixSeconds,
@@ -229,15 +230,15 @@ export function sendLiveActivityRequest(input: {
       ...(reason === undefined ? {} : { reason }),
       apnsId: Option.getOrNull(Headers.get(response.headers, "apns-id")),
     };
-  });
-}
+  },
+);
 
-export function sendPushNotificationRequest(input: {
-  readonly credentials: ApnsCredentials;
-  readonly request: ApnsPushNotificationRequest;
-  readonly issuedAtUnixSeconds: number;
-}): Effect.Effect<ApnsDeliveryResult, ApnsError, HttpClient.HttpClient> {
-  return Effect.gen(function* () {
+export const sendPushNotificationRequest = Effect.fn("relay.apns.send_push_notification_request")(
+  function* (input: {
+    readonly credentials: ApnsCredentials;
+    readonly request: ApnsPushNotificationRequest;
+    readonly issuedAtUnixSeconds: number;
+  }) {
     const jwt = yield* makeApnsJwt({
       ...input.credentials,
       issuedAtUnixSeconds: input.issuedAtUnixSeconds,
@@ -268,5 +269,5 @@ export function sendPushNotificationRequest(input: {
       ...(reason === undefined ? {} : { reason }),
       apnsId: Option.getOrNull(Headers.get(response.headers, "apns-id")),
     };
-  });
-}
+  },
+);

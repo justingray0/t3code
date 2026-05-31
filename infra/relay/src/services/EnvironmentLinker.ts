@@ -20,7 +20,7 @@ import * as DpopProofs from "../persistence/DpopProofs.ts";
 import * as EnvironmentCredentials from "../persistence/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../persistence/EnvironmentLinks.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
-import * as Settings from "../settings.ts";
+import * as RelayConfiguration from "../Config.ts";
 import { verifyLinkChallengeToken } from "../relayTokens.ts";
 
 export class EnvironmentLinkProofExpired extends Data.TaggedError("EnvironmentLinkProofExpired")<{
@@ -111,7 +111,7 @@ const make = Effect.gen(function* () {
   const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
   const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
   const proofReplay = yield* DpopProofs.DpopProofReplay;
-  const settings = yield* Settings.Settings;
+  const config = yield* RelayConfiguration.RelayConfiguration;
 
   return EnvironmentLinker.of({
     link: Effect.fn("relay.environment_linker.link")(function* (input) {
@@ -145,7 +145,7 @@ const make = Effect.gen(function* () {
         });
       }
       const issuer = `t3-env:${candidate.environmentId}`;
-      const relayIssuer = normalizeRelayIssuer(settings.relayIssuer);
+      const relayIssuer = normalizeRelayIssuer(config.relayIssuer);
       const verified = yield* verifyRelayJwt({
         publicKey: candidate.environmentPublicKey,
         token: input.request.proof,
@@ -179,7 +179,7 @@ const make = Effect.gen(function* () {
         });
       }
       const challenge = yield* verifyLinkChallengeToken({
-        settings,
+        config,
         token: verified.challenge,
         userId: input.userId,
         request: {

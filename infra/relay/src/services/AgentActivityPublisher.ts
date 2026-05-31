@@ -47,6 +47,52 @@ const make = Effect.gen(function* () {
   const liveActivities = yield* LiveActivities.LiveActivities;
   const apnsDeliveries = yield* ApnsDeliveries.ApnsDeliveries;
 
+  const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
+    readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
+    readonly state: RelayAgentActivityState | null;
+    readonly nowMs: number;
+  }) {
+    const activeStates = yield* rows.listForUser({ userId: input.deliveryUser.userId });
+    const liveActivityAggregate = input.deliveryUser.liveActivitiesEnabled
+      ? makeAggregateState({
+          activeStates,
+          terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
+        })
+      : null;
+    const notificationOnlyAggregate =
+      input.deliveryUser.notificationsEnabled &&
+      !input.deliveryUser.liveActivitiesEnabled &&
+      input.state !== null
+        ? makeAggregateState({
+            activeStates: isTerminalPhase(input.state) ? [] : [input.state],
+            terminalState: isTerminalPhase(input.state) ? input.state : null,
+          })
+        : null;
+    const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
+    const deliveriesByTarget = yield* Effect.forEach(
+      targets,
+      (target) =>
+        Effect.all(
+          [
+            apnsDeliveries.sendForTarget({
+              target,
+              aggregate: liveActivityAggregate,
+              nowMs: input.nowMs,
+            }),
+            notificationOnlyAggregate === null
+              ? Effect.succeed(null)
+              : apnsDeliveries.sendPushNotificationForTarget({
+                  target,
+                  aggregate: notificationOnlyAggregate,
+                }),
+          ],
+          { concurrency: 2 },
+        ),
+      { concurrency: 4 },
+    );
+    return deliveriesByTarget.flat();
+  });
+
   return AgentActivityPublisher.of({
     replayForLiveActivityRegistration: Effect.fn(
       "relay.agent_activity_publisher.replay_for_live_activity_registration",
@@ -96,46 +142,10 @@ const make = Effect.gen(function* () {
       const deliveriesByUser = yield* Effect.forEach(
         deliveryUsers,
         (deliveryUser) =>
-          Effect.gen(function* () {
-            const activeStates = yield* rows.listForUser({ userId: deliveryUser.userId });
-            const liveActivityAggregate = deliveryUser.liveActivitiesEnabled
-              ? makeAggregateState({
-                  activeStates,
-                  terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
-                })
-              : null;
-            const notificationOnlyAggregate =
-              deliveryUser.notificationsEnabled &&
-              !deliveryUser.liveActivitiesEnabled &&
-              input.state !== null
-                ? makeAggregateState({
-                    activeStates: isTerminalPhase(input.state) ? [] : [input.state],
-                    terminalState: isTerminalPhase(input.state) ? input.state : null,
-                  })
-                : null;
-            const targets = yield* liveActivities.listTargets({ userId: deliveryUser.userId });
-            const deliveriesByTarget = yield* Effect.forEach(
-              targets,
-              (target) =>
-                Effect.all(
-                  [
-                    apnsDeliveries.sendForTarget({
-                      target,
-                      aggregate: liveActivityAggregate,
-                      nowMs: now.epochMilliseconds,
-                    }),
-                    notificationOnlyAggregate === null
-                      ? Effect.succeed(null)
-                      : apnsDeliveries.sendPushNotificationForTarget({
-                          target,
-                          aggregate: notificationOnlyAggregate,
-                        }),
-                  ],
-                  { concurrency: 2 },
-                ),
-              { concurrency: 4 },
-            );
-            return deliveriesByTarget.flat();
+          publishForDeliveryUser({
+            deliveryUser,
+            state: input.state,
+            nowMs: now.epochMilliseconds,
           }),
         { concurrency: 4 },
       );

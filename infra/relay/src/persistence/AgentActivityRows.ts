@@ -62,8 +62,12 @@ const make = Effect.gen(function* () {
   const db = yield* RelayDb;
 
   return AgentActivityRows.of({
-    upsert: (input) =>
-      Effect.gen(function* () {
+    upsert: Effect.fn("relay.agent_activity_rows.upsert")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({
+          "relay.environment_id": input.state.environmentId,
+          "relay.thread_id": input.state.threadId,
+        });
         const now = yield* DateTime.now;
         const stateJson = yield* parseJsonString<RelayAgentActivityState>(
           yield* encodeRelayAgentActivityStateJson(input.state),
@@ -89,10 +93,16 @@ const make = Effect.gen(function* () {
               updatedAt: input.state.updatedAt,
             },
           });
-      }).pipe(Effect.mapError((cause) => new AgentActivityRowUpsertPersistenceError({ cause }))),
+      },
+      Effect.mapError((cause) => new AgentActivityRowUpsertPersistenceError({ cause })),
+    ),
 
-    remove: (input) =>
-      db
+    remove: Effect.fn("relay.agent_activity_rows.remove")(function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "relay.environment_id": input.environmentId,
+        "relay.thread_id": input.threadId,
+      });
+      yield* db
         .delete(relayAgentActivityRows)
         .where(
           and(
@@ -101,10 +111,11 @@ const make = Effect.gen(function* () {
             eq(relayAgentActivityRows.threadId, input.threadId),
           ),
         )
-        .pipe(Effect.mapError((cause) => new AgentActivityRowDeletePersistenceError({ cause }))),
+        .pipe(Effect.mapError((cause) => new AgentActivityRowDeletePersistenceError({ cause })));
+    }),
 
-    listForUser: (input) =>
-      db
+    listForUser: Effect.fn("relay.agent_activity_rows.list_for_user")(function* (input) {
+      return yield* db
         .select({ stateJson: relayAgentActivityRows.stateJson })
         .from(relayAgentActivityRows)
         .innerJoin(
@@ -135,7 +146,8 @@ const make = Effect.gen(function* () {
             rows.flatMap((row) => Option.toArray(decodeRelayAgentActivityStateJson(row))),
           ),
           Effect.mapError((cause) => new AgentActivityRowListPersistenceError({ cause })),
-        ),
+        );
+    }),
   });
 });
 

@@ -14,7 +14,7 @@ import * as Result from "effect/Result";
 import * as DpopProofs from "../persistence/DpopProofs.ts";
 import * as EnvironmentCredentials from "../persistence/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../persistence/EnvironmentLinks.ts";
-import * as Settings from "../settings.ts";
+import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentLinker from "./EnvironmentLinker.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 import { issueLinkChallengeToken } from "../relayTokens.ts";
@@ -27,7 +27,7 @@ const environmentKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
   privateKeyEncoding: { format: "pem", type: "pkcs8" },
   publicKeyEncoding: { format: "pem", type: "spki" },
 });
-const settings = Settings.Settings.of({
+const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
   apns: {
     environment: "sandbox",
@@ -57,7 +57,7 @@ const makeRequest = Effect.gen(function* () {
   const now = yield* DateTime.now;
   const expiresAt = DateTime.add(now, { minutes: 5 });
   const challenge = yield* issueLinkChallengeToken({
-    settings,
+    config,
     userId: "user_123",
     request: {
       notificationsEnabled: true,
@@ -111,9 +111,10 @@ function testLayer(input?: {
   return EnvironmentLinker.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(Settings.Settings, settings),
+        Layer.succeed(RelayConfiguration.RelayConfiguration, config),
         Layer.succeed(DpopProofs.DpopProofReplay, {
           consume: input?.consume ?? (() => Effect.succeed(true)),
+          pruneExpired: Effect.void,
         }),
         Layer.succeed(EnvironmentLinks.EnvironmentLinks, {
           upsert: input?.upsert ?? (() => Effect.void),
