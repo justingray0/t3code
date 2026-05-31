@@ -173,6 +173,48 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect(
+    "namespaces assistant itemIds per runtime instance so reloaded sessions don't collide",
+    () =>
+      Effect.gen(function* () {
+        const runOnce = Effect.gen(function* () {
+          const runtime = yield* AcpSessionRuntime;
+          yield* runtime.start();
+          yield* runtime.prompt({ prompt: [{ type: "text", text: "hi" }] });
+          const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 4)));
+          const delta = notes.find((note) => note._tag === "ContentDelta");
+          if (delta?._tag !== "ContentDelta") {
+            throw new Error("expected ContentDelta event");
+          }
+          return delta.itemId;
+        }).pipe(
+          Effect.provide(
+            AcpSessionRuntime.layer({
+              spawn: { command: bunExe, args: [mockAgentPath] },
+              cwd: process.cwd(),
+              clientInfo: { name: "t3-test", version: "0.0.0" },
+              authMethodId: "test",
+            }),
+          ),
+          Effect.scoped,
+        );
+
+        const firstItemId = yield* runOnce;
+        const secondItemId = yield* runOnce;
+
+        // Both runtimes loaded the same mock ACP `sessionId`; without per-runtime
+        // namespacing the synthesized itemIds collide and the orchestrator
+        // collapses today's assistant message onto yesterday's.
+        expect(firstItemId).not.toBe(secondItemId);
+        expect(firstItemId).toMatch(
+          /^assistant:mock-session-1:run:[0-9a-f-]{36}:segment:0$/,
+        );
+        expect(secondItemId).toMatch(
+          /^assistant:mock-session-1:run:[0-9a-f-]{36}:segment:0$/,
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("suppresses generic placeholder tool updates until completion", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime;

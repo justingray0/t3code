@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -165,6 +167,7 @@ const makeAcpSessionRuntime = (
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
+    const runtimeInstanceId = randomUUID();
 
     const logRequest = (event: AcpSessionRequestLogEvent) =>
       options.requestLogger ? options.requestLogger(event) : Effect.void;
@@ -237,6 +240,7 @@ const makeAcpSessionRuntime = (
         toolCallsRef,
         assistantSegmentRef,
         params: notification,
+        runtimeInstanceId,
       }),
     );
 
@@ -582,12 +586,14 @@ const handleSessionUpdate = ({
   toolCallsRef,
   assistantSegmentRef,
   params,
+  runtimeInstanceId,
 }: {
   readonly queue: Queue.Queue<AcpParsedSessionEvent>;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallState>>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly params: EffectAcpSchema.SessionNotification;
+  readonly runtimeInstanceId: string;
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
     const parsed = parseSessionUpdateEvent(params);
@@ -634,6 +640,7 @@ const handleSessionUpdate = ({
           queue,
           assistantSegmentRef,
           sessionId: params.sessionId,
+          runtimeInstanceId,
         });
         yield* Queue.offer(queue, {
           ...event,
@@ -671,17 +678,28 @@ function shouldEmitToolCallUpdate(
   return previous === undefined || previous.title !== next.title || previous.detail !== next.detail;
 }
 
-const assistantItemId = (sessionId: string, segmentIndex: number) =>
-  `assistant:${sessionId}:segment:${segmentIndex}`;
+// `runtimeInstanceId` is minted per AcpSessionRuntime construction so that
+// itemIds remain unique across runtime restarts that reuse the same ACP
+// `sessionId` (e.g. Cursor's `session/load`). Without it, segment counters
+// reset to 0 on reload while the cursor session id stays the same, and the
+// orchestrator collapses the new assistant message onto the prior turn's
+// message of the same id — making the agent's response invisible to clients.
+const assistantItemId = (
+  sessionId: string,
+  runtimeInstanceId: string,
+  segmentIndex: number,
+) => `assistant:${sessionId}:run:${runtimeInstanceId}:segment:${segmentIndex}`;
 
 const ensureActiveAssistantSegment = ({
   queue,
   assistantSegmentRef,
   sessionId,
+  runtimeInstanceId,
 }: {
   readonly queue: Queue.Queue<AcpParsedSessionEvent>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly sessionId: string;
+  readonly runtimeInstanceId: string;
 }) =>
   Ref.modify<AcpAssistantSegmentState, EnsureActiveAssistantSegmentResult>(
     assistantSegmentRef,
@@ -689,7 +707,7 @@ const ensureActiveAssistantSegment = ({
       if (current.activeItemId) {
         return [{ itemId: current.activeItemId }, current] as const;
       }
-      const itemId = assistantItemId(sessionId, current.nextSegmentIndex);
+      const itemId = assistantItemId(sessionId, runtimeInstanceId, current.nextSegmentIndex);
       return [
         {
           itemId,
