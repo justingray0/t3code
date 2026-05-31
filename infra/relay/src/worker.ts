@@ -164,31 +164,29 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
     const db = yield* Drizzle.postgres(hyperdrive.connectionString);
 
-    const getSettings = yield* Effect.cached(
-      Effect.gen(function* () {
-        const workerEnvironment = yield* Cloudflare.WorkerEnvironment;
-        const apnsPrivateKey = Redacted.make(workerEnvironment.APNS_PRIVATE_KEY);
-        const clerkSecretKey = Redacted.make(workerEnvironment.CLERK_SECRET_KEY);
-        return Settings.Settings.of({
-          relayIssuer: RELAY_PUBLIC_ORIGIN,
-          apns: {
-            environment,
-            teamId: apnsTeamId,
-            keyId: apnsKeyId,
-            bundleId: apnsBundleId,
-            privateKey: apnsPrivateKey,
-          },
-          apnsDeliveryJobSigningSecret: yield* apnsDeliveryJobSigningSecret,
-          clerkSecretKey,
-          cloudMintPrivateKey: yield* cloudMintPrivateKey,
-          cloudMintPublicKey: yield* cloudMintPublicKey,
-          managedEndpointBaseDomain: MANAGED_ENDPOINT_BASE_DOMAIN,
-          cloudflareAccountId: MANAGED_ENDPOINT_ZONE.accountId,
-          cloudflareZoneId: MANAGED_ENDPOINT_ZONE.zoneId,
-          cloudflareApiToken: yield* managedEndpointCloudflareApiToken,
-        });
-      }),
-    );
+    const loadSettings = Effect.gen(function* () {
+      const workerEnvironment = yield* Cloudflare.WorkerEnvironment;
+      const apnsPrivateKey = Redacted.make(workerEnvironment.APNS_PRIVATE_KEY);
+      const clerkSecretKey = Redacted.make(workerEnvironment.CLERK_SECRET_KEY);
+      return Settings.Settings.of({
+        relayIssuer: RELAY_PUBLIC_ORIGIN,
+        apns: {
+          environment,
+          teamId: apnsTeamId,
+          keyId: apnsKeyId,
+          bundleId: apnsBundleId,
+          privateKey: apnsPrivateKey,
+        },
+        apnsDeliveryJobSigningSecret: yield* apnsDeliveryJobSigningSecret,
+        clerkSecretKey,
+        cloudMintPrivateKey: yield* cloudMintPrivateKey,
+        cloudMintPublicKey: yield* cloudMintPublicKey,
+        managedEndpointBaseDomain: MANAGED_ENDPOINT_BASE_DOMAIN,
+        cloudflareAccountId: MANAGED_ENDPOINT_ZONE.accountId,
+        cloudflareZoneId: MANAGED_ENDPOINT_ZONE.zoneId,
+        cloudflareApiToken: yield* managedEndpointCloudflareApiToken,
+      });
+    });
 
     const makeRuntimeLayer = (settings: Settings.SettingsShape) =>
       Layer.mergeAll(
@@ -227,20 +225,23 @@ export default class Api extends Cloudflare.Worker<Api>()(
         Layer.provide(RelayCrypto.layer),
       );
 
-    const makeAppLayer = (settings: Settings.SettingsShape) => {
-      const runtimeLayer = makeRuntimeLayer(settings);
-      return relayApiLayer.pipe(
-        Layer.provide(runtimeLayer),
-        Layer.provide(relayClientAuthLayer),
-        Layer.provide(relayDpopClientAuthLayer),
-        Layer.provide(relayEnvironmentAuthLayer),
-        Layer.provide(EnvironmentCredentials.layer),
-        Layer.provide(EnvironmentLinks.layer),
-        Layer.provide(Layer.succeed(RelayDb, db)),
-        Layer.provide(Layer.succeed(Settings.Settings, settings)),
-        Layer.provide(RelayCrypto.layer),
-      );
-    };
+    const appLayer = Layer.unwrap(
+      Effect.gen(function* () {
+        const settings = yield* loadSettings;
+        const runtimeLayer = makeRuntimeLayer(settings);
+        return relayApiLayer.pipe(
+          Layer.provide(runtimeLayer),
+          Layer.provide(relayClientAuthLayer),
+          Layer.provide(relayDpopClientAuthLayer),
+          Layer.provide(relayEnvironmentAuthLayer),
+          Layer.provide(EnvironmentCredentials.layer),
+          Layer.provide(EnvironmentLinks.layer),
+          Layer.provide(Layer.succeed(RelayDb, db)),
+          Layer.provide(Layer.succeed(Settings.Settings, settings)),
+          Layer.provide(RelayCrypto.layer),
+        );
+      }),
+    );
 
     yield* Cloudflare.messages<unknown>(apnsDeliveryQueue, {
       batchSize: 10,
@@ -249,16 +250,21 @@ export default class Api extends Cloudflare.Worker<Api>()(
       retryDelay: "30 seconds",
       // Alchemy beta.45 expects a resolved string here although Queue names are Outputs.
       deadLetterQueue: apnsDeliveryDeadLetterQueue.queueName as unknown as string,
-    }).subscribe((stream) =>
-      Stream.runForEach(stream, (message) =>
-        Effect.gen(function* () {
-          const settings = yield* getSettings;
-          yield* Effect.gen(function* () {
-            const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-            return yield* deliveries.processSignedJob(message.body);
-          }).pipe(Effect.provide(makeRuntimeLayer(settings)));
-        }),
-      ),
+    }).subscribe(
+      Effect.fnUntraced(function* (stream) {
+        const settings = yield* loadSettings;
+        yield* stream.pipe(
+          Stream.withSpan("relay.apn_delivery_queue.process_batch"),
+          Stream.runForEach(
+            Effect.fn("relay.apn_delivery_queue.process_message")((message) =>
+              ApnsDeliveries.ApnsDeliveries.pipe(
+                Effect.flatMap((deliveries) => deliveries.processSignedJob(message.body)),
+              ),
+            ),
+          ),
+          Effect.provide(makeRuntimeLayer(settings)),
+        );
+      }),
     );
 
     yield* Cloudflare.cron("*/5 * * * *").subscribe(
@@ -267,20 +273,13 @@ export default class Api extends Cloudflare.Worker<Api>()(
       }),
     );
 
-    const buildFetch = Effect.fnUntraced(function* () {
-      const settings = yield* getSettings;
-      const handler = yield* HttpApiBuilder.layer(RelayApi).pipe(
-        Layer.provide(makeAppLayer(settings)),
-        Layer.provide([Etag.layerWeak, RelayHttpPlatformLayer, relayCors]),
-        HttpRouter.toHttpEffect,
-      );
-      return { handler };
-    });
-    const getFetch = yield* Effect.cached(buildFetch());
-    const fetch = getFetch.pipe(
-      Effect.map(({ handler }) =>
-        traceRelayHttpRequest(handler).pipe(Effect.provide(relayTraceLayer)),
-      ),
+    const fetch = HttpApiBuilder.layer(RelayApi).pipe(
+      Layer.provide(appLayer),
+      Layer.provide([Etag.layerWeak, RelayHttpPlatformLayer, relayCors]),
+      HttpRouter.toHttpEffect,
+      Effect.map(traceRelayHttpRequest),
+      Effect.provide(relayTraceLayer),
+      Effect.flatten,
     );
 
     return { fetch };
