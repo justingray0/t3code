@@ -25,9 +25,11 @@ import {
   relayDpopClientAuthLayer,
   relayCors,
   relayEnvironmentAuthLayer,
+  relayNotFoundRoute,
   serverApi,
-  traceRelayHttpRequest,
+  traceRelayHttpRequestWith,
   tokenApi,
+  withoutCapturedParentSpan,
 } from "./api.ts";
 import {
   MANAGED_ENDPOINT_BASE_DOMAIN,
@@ -266,12 +268,16 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
     );
 
-    const fetch = HttpApiBuilder.layer(RelayApi).pipe(
-      Layer.provide(appLayer),
-      Layer.provide([Etag.layerWeak, RelayHttpPlatformLayer, relayCors]),
+    const fetch = Layer.merge(
+      HttpApiBuilder.layer(RelayApi).pipe(
+        Layer.provide(appLayer),
+        Layer.provide([Etag.layerWeak, RelayHttpPlatformLayer, relayCors]),
+      ),
+      relayNotFoundRoute,
+    ).pipe(
       HttpRouter.toHttpEffect,
-      Effect.map(traceRelayHttpRequest),
-      Effect.provide(relayTraceLayer),
+      withoutCapturedParentSpan,
+      Effect.map((httpEffect) => traceRelayHttpRequestWith(httpEffect, relayTraceLayer)),
       Effect.flatten,
     );
 

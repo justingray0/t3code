@@ -1,4 +1,5 @@
 import * as Axiom from "alchemy/Axiom";
+import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 
 export const RELAY_OBSERVABILITY_SERVICE_NAME = "t3-code-relay-worker";
@@ -38,19 +39,19 @@ export const provisionRelayObservability = Effect.gen(function* () {
   const ingestToken = yield* Axiom.ApiToken("RelayAxiomIngestToken", {
     name: "t3-code-relay-otel-ingest",
     description: "Owned by Alchemy. Scoped OTLP ingest token for relay HTTP spans.",
-    datasetCapabilities: relayAxiomIngestDatasetCapabilities(),
+    datasetCapabilities: Output.map(traces.name, relayAxiomIngestDatasetCapabilities),
   });
   const queryToken = yield* Axiom.ApiToken("RelayAxiomQueryToken", {
     name: "t3-code-relay-readonly-query",
     description: "Owned by Alchemy. Read-only query token for relay HTTP span diagnostics.",
-    datasetCapabilities: relayAxiomQueryDatasetCapabilities(),
+    datasetCapabilities: Output.map(traces.name, relayAxiomQueryDatasetCapabilities),
   });
 
   yield* Axiom.View("RelayRecentSpansView", {
     name: "t3-code-relay-recent-spans",
     description: "Recent relay HTTP request spans.",
-    datasets: [RELAY_AXIOM_TRACE_DATASET],
-    aplQuery: relayRecentSpansQuery(),
+    datasets: [traces.name],
+    aplQuery: Output.map(traces.name, relayRecentSpansQuery),
   });
 
   return { traces, ingestToken, queryToken } as const;

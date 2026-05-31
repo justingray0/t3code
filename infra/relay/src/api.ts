@@ -3,12 +3,14 @@ import { sql as drizzleSql } from "drizzle-orm";
 import type * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Record from "effect/Record";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
 import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";
 import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
@@ -136,6 +138,12 @@ export const relayCors = HttpRouter.middleware(
   { global: true },
 );
 
+export const relayNotFoundRoute = HttpRouter.add(
+  "*",
+  "/*",
+  HttpServerResponse.empty({ status: 404 }),
+);
+
 export const traceRelayHttpRequest = <E, R>(
   httpEffect: Effect.Effect<
     HttpServerResponse.HttpServerResponse,
@@ -145,6 +153,25 @@ export const traceRelayHttpRequest = <E, R>(
 ) =>
   // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
   HttpMiddleware.tracer(httpEffect).pipe(Effect.ensuring(Effect.yieldNow));
+
+export const traceRelayHttpRequestWith = <E, R, LayerError, LayerRequirements>(
+  httpEffect: Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    E,
+    HttpServerRequest.HttpServerRequest | R
+  >,
+  tracerLayer: Layer.Layer<never, LayerError, LayerRequirements>,
+) => traceRelayHttpRequest(httpEffect).pipe(Effect.provide(tracerLayer));
+
+export const withoutCapturedParentSpan = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.withFiber((fiber) => {
+    const context = fiber.context;
+    // HttpApiBuilder captures its build context for route handlers; an event parent would outlive export.
+    fiber.setContext(Context.omit(Tracer.ParentSpan)(context));
+    return effect.pipe(Effect.ensuring(Effect.sync(() => fiber.setContext(context))));
+  });
 
 export const relayClientAuthLayer = Layer.effect(
   RelayClientAuth,

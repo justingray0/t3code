@@ -1,7 +1,12 @@
+import * as Alchemy from "alchemy";
+import * as Axiom from "alchemy/Axiom";
+import * as Output from "alchemy/Output";
+import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vitest";
 
 import {
   RELAY_AXIOM_TRACE_DATASET,
+  provisionRelayObservability,
   relayAxiomIngestDatasetCapabilities,
   relayAxiomQueryDatasetCapabilities,
   relayRecentSpansQuery,
@@ -36,5 +41,40 @@ describe("RelayObservability", () => {
     expect(query).toContain("attributes.url.path");
     expect(query).toContain("column_ifexists('attributes.custom', dynamic({}))['relay.endpoint']");
     expect(query).not.toContain("['http.request.method']");
+  });
+
+  it("orders token and view resources behind the trace dataset", async () => {
+    const stack = {
+      name: "RelayObservabilityTest",
+      stage: "test",
+      resources: {},
+      bindings: {},
+      actions: {},
+    };
+
+    await Effect.runPromise(
+      provisionRelayObservability.pipe(
+        Effect.provideService(Alchemy.Stack, stack),
+        Effect.provideService(Axiom.Providers, {
+          kind: "ProviderCollection",
+          get: () => undefined,
+        }),
+      ),
+    );
+
+    const resources = stack.resources as Record<string, { FQN: string; Props: unknown }>;
+    const traces = resources.RelayTracesDataset;
+
+    expect(traces).toBeDefined();
+    for (const logicalId of [
+      "RelayAxiomIngestToken",
+      "RelayAxiomQueryToken",
+      "RelayRecentSpansView",
+    ]) {
+      expect(resources[logicalId]).toBeDefined();
+      expect(Object.keys(Output.resolveUpstream(resources[logicalId]!.Props))).toContain(
+        traces!.FQN,
+      );
+    }
   });
 });
