@@ -86,6 +86,7 @@ export function ThreadRouteScreen() {
   const routeConnectionState = routeEnvironmentRuntime?.connectionState ?? connectionState;
   const routeConnectionError =
     pendingConnectionError ?? routeEnvironmentRuntime?.connectionError ?? aggregateConnectionError;
+  const routeReconnectAttempt = routeEnvironmentRuntime?.reconnectAttempt ?? 0;
 
   /* ─── Native header theming ──────────────────────────────────────── */
   const isDark = useColorScheme() === "dark";
@@ -378,6 +379,7 @@ export function ThreadRouteScreen() {
           draftMessage={composer.draftMessage}
           draftAttachments={composer.draftAttachments}
           connectionStateLabel={routeConnectionState}
+          connectionReconnectAttempt={routeReconnectAttempt}
           activeThreadBusy={composer.activeThreadBusy}
           environmentId={selectedThread.environmentId}
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}

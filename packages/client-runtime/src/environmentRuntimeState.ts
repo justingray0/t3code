@@ -12,6 +12,7 @@ export interface EnvironmentRuntimeState {
   readonly connectionState: EnvironmentConnectionState;
   readonly connectionError: string | null;
   readonly serverConfig: T3ServerConfig | null;
+  readonly reconnectAttempt: number;
 }
 
 export interface EnvironmentRuntimeTarget {
@@ -22,6 +23,7 @@ export const EMPTY_ENVIRONMENT_RUNTIME_STATE = Object.freeze<EnvironmentRuntimeS
   connectionState: "idle",
   connectionError: null,
   serverConfig: null,
+  reconnectAttempt: 0,
 });
 
 const knownEnvironmentRuntimeKeys = new Set<string>();
