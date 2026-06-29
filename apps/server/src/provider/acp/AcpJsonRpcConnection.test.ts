@@ -526,6 +526,7 @@ describe("AcpSessionRuntime", () => {
       ),
       Effect.scoped,
       Effect.provide(NodeServices.layer),
+      TestClock.withLive,
     ),
   );
 
@@ -559,6 +560,44 @@ describe("AcpSessionRuntime", () => {
           resumeSessionId: "mock-session-1",
           sessionLoadReplayIdleGap: "50 millis",
           sessionLoadTimeout: "1 second",
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+      TestClock.withLive,
+    ),
+  );
+
+  it.effect("waits for delayed session/load replay tail after the load RPC returns", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const started = yield* runtime.start().pipe(Effect.timeout("2 seconds"));
+
+      expect(started.sessionId).toBe("mock-session-1");
+      expect(started.sessionSetupResult._meta).not.toMatchObject({
+        t3SessionLoadReady: "replay_idle",
+      });
+
+      const unexpectedReplayEvent = yield* Stream.runHead(runtime.getEvents()).pipe(
+        Effect.timeoutOption("100 millis"),
+      );
+      expect(Option.isNone(unexpectedReplayEvent)).toBe(true);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_FAST_LOAD_WITH_DELAYED_REPLAY_TAIL: "1",
+            },
+          },
+          cwd: process.cwd(),
+          resumeSessionId: "mock-session-1",
+          sessionLoadReplayIdleGap: "50 millis",
+          sessionLoadTimeout: "2 seconds",
           clientInfo: { name: "t3-test", version: "0.0.0" },
         }),
       ),

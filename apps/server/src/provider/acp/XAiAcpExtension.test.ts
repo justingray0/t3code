@@ -4,8 +4,12 @@ import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect } from "vite-plus/test";
 
 import {
@@ -13,15 +17,18 @@ import {
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   makeXAiPromptCompletionRuntime,
+  resolveXAiPromptCompletionFallback,
   XAiAskUserQuestionRequest,
 } from "./XAiAcpExtension.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 
-const makePromptCompletionRuntime = (env: NodeJS.ProcessEnv) =>
+const makePromptCompletionRuntime = (env: NodeJS.ProcessEnv, resumeSessionId?: string) =>
   Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
     const runtime = yield* AcpSessionRuntime.make({
       spawn: {
         command: process.execPath,
@@ -31,8 +38,21 @@ const makePromptCompletionRuntime = (env: NodeJS.ProcessEnv) =>
       cwd: process.cwd(),
       clientInfo: { name: "t3-test", version: "0.0.0" },
       authMethodId: "test",
+      ...(resumeSessionId ? { resumeSessionId } : {}),
+      sessionLoadReplayIdleGap: "50 millis",
+      sessionLoadTimeout: "2 seconds",
     });
-    return yield* makeXAiPromptCompletionRuntime(runtime);
+    const allocatePromptFallbackId = crypto.randomUUIDv4.pipe(
+      Effect.map((uuid) => `t3-xai-prompt-${uuid}`),
+      Effect.mapError(
+        (cause) =>
+          new EffectAcpErrors.AcpTransportError({
+            detail: "Failed to allocate xAI prompt identifier.",
+            cause,
+          }),
+      ),
+    );
+    return yield* makeXAiPromptCompletionRuntime(runtime, allocatePromptFallbackId);
   });
 
 const decodeXAiAskUserQuestionRequest = Schema.decodeUnknownSync(XAiAskUserQuestionRequest);
@@ -296,7 +316,175 @@ describe("XAiAcpExtension", () => {
           requestId: promptId,
         },
       });
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+  );
+
+  it.effect("ignores xAI prompt completion notifications during session/load replay", () =>
+    Effect.gen(function* () {
+      const pendingRef = yield* Ref.make<
+        ReadonlyArray<{
+          readonly sessionId: string;
+          readonly promptId: string;
+          readonly deferred: Deferred.Deferred<import("effect-acp/schema").PromptResponse>;
+        }>
+      >([
+        {
+          sessionId: "session-1",
+          promptId: "t3-xai-prompt-1",
+          deferred: yield* Deferred.make<import("effect-acp/schema").PromptResponse>(),
+        },
+      ]);
+      const completedPromptIdsRef = yield* Ref.make<ReadonlyArray<string>>([]);
+
+      yield* resolveXAiPromptCompletionFallback({
+        pendingRef,
+        completedPromptIdsRef,
+        notification: {
+          sessionId: "session-1",
+          promptId: "t3-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        },
+        isSessionLoadReplayActive: Effect.succeed(true),
+      });
+
+      const pending = yield* Ref.get(pendingRef);
+      expect(pending).toHaveLength(1);
+      expect(pending[0]?.promptId).toBe("t3-xai-prompt-1");
+    }),
+  );
+
+  it.effect("completes a prompt after session/load with a delayed replay tail", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePromptCompletionRuntime(
+        {
+          T3_ACP_FAST_LOAD_WITH_DELAYED_REPLAY_TAIL: "1",
+          T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
+        },
+        "mock-session-1",
+      );
+      yield* runtime.start();
+
+      const promptResult = yield* runtime.prompt({
+        prompt: [{ type: "text", text: "after resume" }],
+      });
+      const promptId = promptResult._meta?.promptId;
+
+      expect(typeof promptId).toBe("string");
+      expect(promptResult).toMatchObject({
+        stopReason: "end_turn",
+        _meta: {
+          sessionId: "mock-session-1",
+          promptId,
+          requestId: promptId,
+        },
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+  );
+
+  it.effect("ignores xAI prompt completion notifications without a prompt id", () =>
+    Effect.gen(function* () {
+      const pendingRef = yield* Ref.make<
+        ReadonlyArray<{
+          readonly sessionId: string;
+          readonly promptId: string;
+          readonly deferred: Deferred.Deferred<import("effect-acp/schema").PromptResponse>;
+        }>
+      >([
+        {
+          sessionId: "session-1",
+          promptId: "t3-xai-prompt-1",
+          deferred: yield* Deferred.make<import("effect-acp/schema").PromptResponse>(),
+        },
+      ]);
+      const completedPromptIdsRef = yield* Ref.make<ReadonlyArray<string>>([]);
+
+      yield* resolveXAiPromptCompletionFallback({
+        pendingRef,
+        completedPromptIdsRef,
+        notification: {
+          sessionId: "session-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        },
+      });
+
+      const pending = yield* Ref.get(pendingRef);
+      expect(pending).toHaveLength(1);
+      expect(pending[0]?.promptId).toBe("t3-xai-prompt-1");
+    }),
+  );
+
+  it.effect("settles deferred after grace without blocking the notification handler", () =>
+    Effect.gen(function* () {
+      const deferred = yield* Deferred.make<import("effect-acp/schema").PromptResponse>();
+      const pendingRef = yield* Ref.make<
+        ReadonlyArray<{
+          readonly sessionId: string;
+          readonly promptId: string;
+          readonly deferred: Deferred.Deferred<import("effect-acp/schema").PromptResponse>;
+        }>
+      >([
+        {
+          sessionId: "session-1",
+          promptId: "t3-xai-prompt-1",
+          deferred,
+        },
+      ]);
+      const completedPromptIdsRef = yield* Ref.make<ReadonlyArray<string>>([]);
+
+      yield* resolveXAiPromptCompletionFallback({
+        pendingRef,
+        completedPromptIdsRef,
+        notification: {
+          sessionId: "session-1",
+          promptId: "t3-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        },
+      });
+
+      expect(yield* Deferred.isDone(deferred)).toBe(false);
+      yield* Effect.sleep("600 millis");
+      expect(yield* Deferred.isDone(deferred)).toBe(true);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect(
+    "ignores replayed prompt completion when prompt id does not match the in-flight prompt",
+    () =>
+      Effect.gen(function* () {
+        const deferred = yield* Deferred.make<import("effect-acp/schema").PromptResponse>();
+        const pendingRef = yield* Ref.make<
+          ReadonlyArray<{
+            readonly sessionId: string;
+            readonly promptId: string;
+            readonly deferred: Deferred.Deferred<import("effect-acp/schema").PromptResponse>;
+          }>
+        >([
+          {
+            sessionId: "session-1",
+            promptId: "t3-xai-prompt-fresh-uuid",
+            deferred,
+          },
+        ]);
+        const completedPromptIdsRef = yield* Ref.make<ReadonlyArray<string>>([]);
+
+        yield* resolveXAiPromptCompletionFallback({
+          pendingRef,
+          completedPromptIdsRef,
+          notification: {
+            sessionId: "session-1",
+            promptId: "t3-xai-prompt-1",
+            stopReason: "end_turn",
+            agentResult: null,
+          },
+        });
+
+        const pending = yield* Ref.get(pendingRef);
+        expect(pending).toHaveLength(1);
+        expect(yield* Deferred.isDone(deferred)).toBe(false);
+      }),
   );
 
   it.effect("ignores stale xAI completion from an already settled prompt", () =>
@@ -327,6 +515,6 @@ describe("XAiAcpExtension", () => {
           requestId: secondPromptId,
         },
       });
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
   );
 });

@@ -1293,6 +1293,19 @@ routing.layer("ProviderServiceLive routing", (it) => {
         attachments: [],
       });
 
+      yield* Stream.runForEach(provider.streamEvents, () => Effect.void).pipe(Effect.forkChild);
+      yield* advanceTestClock(50);
+
+      routing.codex.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-runtime-status-start"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: session.threadId,
+        turnId: asTurnId(`turn-${String(session.threadId)}`),
+      });
+      yield* advanceTestClock(50);
+
       const runningRuntime = yield* runtimeRepository.getByThreadId({
         threadId: session.threadId,
       });
@@ -1314,7 +1327,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           assert.equal(runtimePayload.model, null);
           assert.equal(runtimePayload.activeTurnId, `turn-${String(session.threadId)}`);
           assert.equal(runtimePayload.lastError, null);
-          assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
+          assert.equal(runtimePayload.lastRuntimeEvent, "provider.turn.started");
         }
       }
     }),
@@ -1570,6 +1583,137 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         ),
         true,
       );
+    }),
+  );
+
+  it.effect("clears persisted activeTurnId when adapter emits turn.completed", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const session = yield* provider.startSession(asThreadId("thread-runtime-turn-complete"), {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-runtime-turn-complete"),
+        runtimeMode: "full-access",
+      });
+      yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      yield* Stream.runForEach(provider.streamEvents, () => Effect.void).pipe(Effect.forkChild);
+      yield* advanceTestClock(50);
+
+      fanout.codex.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-runtime-turn-start"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: session.threadId,
+        turnId: asTurnId(`turn-${String(session.threadId)}`),
+      });
+      yield* advanceTestClock(50);
+
+      const runningRuntime = yield* runtimeRepository.getByThreadId({
+        threadId: session.threadId,
+      });
+      assert.equal(Option.isSome(runningRuntime), true);
+      if (Option.isSome(runningRuntime)) {
+        const payload = runningRuntime.value.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          assert.equal(
+            (payload as { activeTurnId: string | null }).activeTurnId,
+            `turn-${String(session.threadId)}`,
+          );
+        }
+      }
+
+      fanout.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-runtime-turn-complete"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: session.threadId,
+        turnId: asTurnId(`turn-${String(session.threadId)}`),
+        status: "completed",
+      });
+      yield* advanceTestClock(50);
+
+      const settledRuntime = yield* runtimeRepository.getByThreadId({
+        threadId: session.threadId,
+      });
+      assert.equal(Option.isSome(settledRuntime), true);
+      if (Option.isSome(settledRuntime)) {
+        const payload = settledRuntime.value.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            activeTurnId: string | null;
+            lastRuntimeEvent: string | null;
+          };
+          assert.equal(runtimePayload.activeTurnId, null);
+          assert.equal(runtimePayload.lastRuntimeEvent, "provider.turn.completed");
+          assert.equal(settledRuntime.value.status, "running");
+        }
+      }
+    }),
+  );
+
+  it.effect("does not resurrect activeTurnId after sendTurn returns following turn.completed", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const session = yield* provider.startSession(asThreadId("thread-runtime-sendturn-settle"), {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-runtime-sendturn-settle"),
+        runtimeMode: "full-access",
+      });
+      const turnId = asTurnId(`turn-${String(session.threadId)}`);
+
+      yield* Stream.runForEach(provider.streamEvents, () => Effect.void).pipe(Effect.forkChild);
+      yield* advanceTestClock(50);
+
+      fanout.codex.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-runtime-sendturn-start"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: session.threadId,
+        turnId,
+      });
+      fanout.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-runtime-sendturn-complete"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: session.threadId,
+        turnId,
+        status: "completed",
+      });
+      yield* advanceTestClock(50);
+
+      yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+      yield* advanceTestClock(50);
+
+      const settledRuntime = yield* runtimeRepository.getByThreadId({
+        threadId: session.threadId,
+      });
+      assert.equal(Option.isSome(settledRuntime), true);
+      if (Option.isSome(settledRuntime)) {
+        const payload = settledRuntime.value.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          assert.equal((payload as { activeTurnId: string | null }).activeTurnId, null);
+          assert.equal(settledRuntime.value.status, "running");
+        }
+      }
     }),
   );
 

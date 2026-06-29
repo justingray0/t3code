@@ -570,32 +570,45 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           });
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-          const acp = yield* makeGrokAcpRuntime({
-            grokSettings,
-            ...(options?.environment ? { environment: options.environment } : {}),
-            childProcessSpawner,
-            cwd,
-            ...(resumeSessionId ? { resumeSessionId } : {}),
-            clientInfo: { name: "t3-code", version: "0.0.0" },
-            ...(mcpSession
-              ? {
-                  mcpServers: [
-                    {
-                      type: "http" as const,
-                      name: "t3-code",
-                      url: mcpSession.endpoint,
-                      headers: [
-                        {
-                          name: "Authorization",
-                          value: mcpSession.authorizationHeader,
-                        },
-                      ],
-                    },
-                  ],
-                }
-              : {}),
-            ...acpNativeLoggers,
-          }).pipe(
+          const allocateXAiPromptFallbackId = randomUUIDv4.pipe(
+            Effect.map((uuid) => `t3-xai-prompt-${uuid}`),
+            Effect.mapError(
+              (cause) =>
+                new EffectAcpErrors.AcpTransportError({
+                  detail: "Failed to allocate xAI prompt identifier.",
+                  cause,
+                }),
+            ),
+          );
+          const acp = yield* makeGrokAcpRuntime(
+            {
+              grokSettings,
+              ...(options?.environment ? { environment: options.environment } : {}),
+              childProcessSpawner,
+              cwd,
+              ...(resumeSessionId ? { resumeSessionId } : {}),
+              clientInfo: { name: "t3-code", version: "0.0.0" },
+              ...(mcpSession
+                ? {
+                    mcpServers: [
+                      {
+                        type: "http" as const,
+                        name: "t3-code",
+                        url: mcpSession.endpoint,
+                        headers: [
+                          {
+                            name: "Authorization",
+                            value: mcpSession.authorizationHeader,
+                          },
+                        ],
+                      },
+                    ],
+                  }
+                : {}),
+              ...acpNativeLoggers,
+            },
+            allocateXAiPromptFallbackId,
+          ).pipe(
             Effect.provideService(Scope.Scope, sessionScope),
             Effect.mapError(
               (cause) =>

@@ -1,9 +1,11 @@
 import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/schema";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import type * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
@@ -24,6 +26,7 @@ interface PendingXAiPromptCompletion {
 
 const completedXAiPromptIdLimit = 128;
 const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
+export const xAiPromptCompletionSettleDelay = Duration.millis(500);
 
 const XAiAskUserQuestionOption = Schema.Struct({
   label: Schema.String,
@@ -201,15 +204,13 @@ export function makeXAiAskUserQuestionCancelledResponse(): XAiAskUserQuestionCan
  * The underlying runtime remains unaware of xAI methods and metadata.
  */
 export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletionRuntime")(
-  function* (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"]) {
+  function* (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+    allocatePromptFallbackId: Effect.Effect<string, EffectAcpErrors.AcpError>,
+  ) {
     const activeSessionIdRef = yield* Ref.make<string | undefined>(undefined);
     const pendingRef = yield* Ref.make<ReadonlyArray<PendingXAiPromptCompletion>>([]);
     const completedPromptIdsRef = yield* Ref.make<ReadonlyArray<string>>([]);
-    let nextPromptFallbackId = 0;
-    const allocatePromptFallbackId = Effect.sync(() => {
-      nextPromptFallbackId += 1;
-      return `t3-xai-prompt-${nextPromptFallbackId}`;
-    });
 
     yield* runtime.handleExtNotification(
       "_x.ai/session/prompt_complete",
@@ -219,6 +220,8 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
           pendingRef,
           completedPromptIdsRef,
           notification,
+          isSessionLoadReplayActive: runtime.isSessionLoadReplayActive,
+          touchSessionLoadReplayActivity: runtime.touchSessionLoadReplayActivity,
         }),
     );
 
@@ -324,45 +327,74 @@ const abortPendingPromptCompletions = (
     ] as const;
   }).pipe(Effect.flatten);
 
-const resolveXAiPromptCompletionFallback = ({
+export const resolveXAiPromptCompletionFallback = ({
   pendingRef,
   completedPromptIdsRef,
   notification,
+  isSessionLoadReplayActive,
+  touchSessionLoadReplayActivity,
 }: {
   readonly pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>;
   readonly completedPromptIdsRef: Ref.Ref<ReadonlyArray<string>>;
   readonly notification: XAiPromptCompleteNotification;
+  readonly isSessionLoadReplayActive?: Effect.Effect<boolean>;
+  readonly touchSessionLoadReplayActivity?: Effect.Effect<void>;
 }) =>
-  Ref.get(completedPromptIdsRef).pipe(
-    Effect.flatMap((completedPromptIds) => {
-      if (
-        notification.promptId !== undefined &&
-        completedPromptIds.includes(notification.promptId)
-      ) {
-        return Effect.void;
-      }
-      return Ref.modify(pendingRef, (pending) => {
-        const index =
-          notification.promptId !== undefined
-            ? pending.findIndex(
-                (entry) =>
-                  entry.sessionId === notification.sessionId &&
-                  entry.promptId === notification.promptId,
-              )
-            : pending.findIndex((entry) => entry.sessionId === notification.sessionId);
-        if (index < 0) {
-          return [Effect.void, pending] as const;
-        }
-        const entry = pending[index];
-        if (!entry) {
-          return [Effect.void, pending] as const;
-        }
-        return [
-          Deferred.succeed(entry.deferred, promptResponseFromXAi(notification)).pipe(Effect.asVoid),
-          [...pending.slice(0, index), ...pending.slice(index + 1)],
-        ] as const;
-      }).pipe(Effect.flatten);
-    }),
+  (isSessionLoadReplayActive ?? Effect.succeed(false)).pipe(
+    Effect.flatMap((loadReplayActive) =>
+      loadReplayActive
+        ? (touchSessionLoadReplayActivity ?? Effect.void)
+        : Ref.get(completedPromptIdsRef).pipe(
+            Effect.flatMap((completedPromptIds) => {
+              if (
+                notification.promptId !== undefined &&
+                completedPromptIds.includes(notification.promptId)
+              ) {
+                return Effect.void;
+              }
+              // Require an explicit prompt id. Session-id-only matching would let a
+              // replayed or stale prompt_complete from session/load settle the wrong
+              // in-flight prompt and interrupt the real session/prompt RPC.
+              if (notification.promptId === undefined) {
+                return Effect.void;
+              }
+              return Ref.modify(pendingRef, (pending) => {
+                const index = pending.findIndex(
+                  (entry) =>
+                    entry.sessionId === notification.sessionId &&
+                    entry.promptId === notification.promptId,
+                );
+                if (index < 0) {
+                  return [Effect.void, pending] as const;
+                }
+                const entry = pending[index];
+                if (!entry) {
+                  return [Effect.void, pending] as const;
+                }
+                return [
+                  Effect.gen(function* () {
+                    yield* Effect.sleep(xAiPromptCompletionSettleDelay);
+                    yield* Ref.modify(pendingRef, (current) => {
+                      const stillIndex = current.findIndex(
+                        (candidate) => candidate.deferred === entry.deferred,
+                      );
+                      if (stillIndex < 0) {
+                        return [Effect.void, current] as const;
+                      }
+                      return [
+                        Deferred.succeed(entry.deferred, promptResponseFromXAi(notification)).pipe(
+                          Effect.asVoid,
+                        ),
+                        [...current.slice(0, stillIndex), ...current.slice(stillIndex + 1)],
+                      ] as const;
+                    }).pipe(Effect.flatten);
+                  }).pipe(Effect.forkDetach, Effect.asVoid),
+                  pending,
+                ] as const;
+              }).pipe(Effect.flatten);
+            }),
+          ),
+    ),
   );
 
 const rememberCompletedXAiPromptId = (
