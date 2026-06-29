@@ -33,6 +33,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import { recoverOrphanedProviderSessions } from "./provider/Layers/ProviderSessionRecovery.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
 import {
   formatHeadlessServeOutput,
@@ -342,6 +343,13 @@ export const make = Effect.gen(function* () {
       "reactors.start",
       Effect.gen(function* () {
         yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
+        yield* recoverOrphanedProviderSessions.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider session recovery failed on startup", {
+              cause,
+            }),
+          ),
+        );
         yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
       }),
     );

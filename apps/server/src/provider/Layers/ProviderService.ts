@@ -25,6 +25,7 @@ import {
   type ProviderSession,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -281,6 +282,80 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     });
 
+  const syncPersistedRuntimeFromLifecycleEvent = (
+    event: ProviderRuntimeEvent,
+  ): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const threadId = event.threadId;
+      if (threadId === undefined) {
+        return;
+      }
+
+      const bindingOption = yield* directory.getBinding(threadId);
+      const binding = Option.getOrUndefined(bindingOption);
+      if (!binding || binding.providerInstanceId === undefined) {
+        return;
+      }
+
+      const providerInstanceId = binding.providerInstanceId;
+
+      const now = yield* nowIso;
+      switch (event.type) {
+        case "turn.started":
+          if (event.turnId === undefined) {
+            return;
+          }
+          yield* directory.upsert({
+            threadId,
+            provider: binding.provider,
+            providerInstanceId,
+            status: "running",
+            runtimePayload: {
+              activeTurnId: event.turnId,
+              lastRuntimeEvent: "provider.turn.started",
+              lastRuntimeEventAt: now,
+            },
+          });
+          return;
+        case "turn.completed":
+          yield* directory.upsert({
+            threadId,
+            provider: binding.provider,
+            providerInstanceId,
+            status: binding.status === "starting" ? "starting" : "running",
+            runtimePayload: {
+              activeTurnId: null,
+              lastRuntimeEvent: "provider.turn.completed",
+              lastRuntimeEventAt: now,
+            },
+          });
+          return;
+        case "session.exited":
+          yield* directory.upsert({
+            threadId,
+            provider: binding.provider,
+            providerInstanceId,
+            status: "stopped",
+            runtimePayload: {
+              activeTurnId: null,
+              lastRuntimeEvent: "provider.session.exited",
+              lastRuntimeEventAt: now,
+            },
+          });
+          return;
+        default:
+          return;
+      }
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider runtime binding sync failed", {
+          eventType: event.type,
+          threadId: event.threadId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+
   const processRuntimeEvent = (
     source: {
       readonly instanceId: ProviderInstanceId;
@@ -290,10 +365,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   ): Effect.Effect<void> =>
     Effect.sync(() => correlateRuntimeEventWithInstance(source, event)).pipe(
       Effect.flatMap((canonicalEvent) =>
-        increment(providerRuntimeEventsTotal, {
-          provider: canonicalEvent.provider,
-          eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
+        syncPersistedRuntimeFromLifecycleEvent(canonicalEvent).pipe(
+          Effect.andThen(
+            increment(providerRuntimeEventsTotal, {
+              provider: canonicalEvent.provider,
+              eventType: canonicalEvent.type,
+            }),
+          ),
+          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
+        ),
       ),
     );
 
@@ -683,15 +763,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
       });
       const turn = yield* routed.adapter.sendTurn(input);
+      // Persist resume cursor and bookkeeping only. Turn/session status and
+      // activeTurnId are owned by lifecycle events (turn.started/completed).
       yield* directory.upsert({
         threadId: input.threadId,
         provider: routed.adapter.provider,
         providerInstanceId: routed.instanceId,
-        status: "running",
         ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
         runtimePayload: {
           ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-          activeTurnId: turn.turnId,
+          activeTurnId: null,
           lastRuntimeEvent: "provider.sendTurn",
           lastRuntimeEventAt: yield* nowIso,
         },
@@ -732,7 +813,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         const routed = yield* resolveRoutableSession({
           threadId: input.threadId,
           operation: "ProviderService.interruptTurn",
-          allowRecovery: true,
+          // Stop must not resurrect a dead provider process; session settle
+          // happens in ProviderCommandReactor when interrupt is a no-op.
+          allowRecovery: false,
         });
         metricProvider = routed.adapter.provider;
         yield* Effect.annotateCurrentSpan({
@@ -741,7 +824,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.thread_id": input.threadId,
           "provider.turn_id": input.turnId,
         });
-        yield* routed.adapter.interruptTurn(routed.threadId, input.turnId);
+        if (routed.isActive) {
+          yield* routed.adapter.interruptTurn(routed.threadId, input.turnId);
+        }
         yield* analytics.record("provider.turn.interrupted", {
           provider: routed.adapter.provider,
         });

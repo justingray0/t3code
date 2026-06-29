@@ -870,8 +870,8 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
-    const hasSession = thread.session && thread.session.status !== "stopped";
-    if (!hasSession) {
+    const session = thread.session;
+    if (!session || session.status === "stopped") {
       return yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.turn.interrupt.failed",
@@ -882,8 +882,63 @@ const make = Effect.gen(function* () {
       });
     }
 
-    // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    const now = event.payload.createdAt;
+    const turnId = event.payload.turnId;
+    const latestTurn = thread.latestTurn;
+    const sessionStillShowsActiveTurn =
+      session.status === "running" ||
+      session.status === "starting" ||
+      session.activeTurnId !== null;
+    const turnWasSettledBeforeThisInterrupt =
+      turnId !== undefined &&
+      latestTurn?.turnId === turnId &&
+      latestTurn.state !== "running" &&
+      latestTurn.completedAt !== null &&
+      latestTurn.completedAt < now;
+    const shouldSignalProvider =
+      !turnWasSettledBeforeThisInterrupt &&
+      (session.status === "running" ||
+        session.status === "starting" ||
+        session.activeTurnId !== null);
+
+    if (shouldSignalProvider) {
+      // Orchestration turn ids are not provider turn ids, so interrupt by session.
+      yield* providerService
+        .interruptTurn({
+          threadId: event.payload.threadId,
+          ...(turnId !== undefined ? { turnId } : {}),
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            appendProviderFailureActivity({
+              threadId: event.payload.threadId,
+              kind: "provider.turn.interrupt.failed",
+              summary: "Provider turn interrupt failed",
+              detail: Cause.pretty(cause),
+              turnId: turnId ?? null,
+              createdAt: now,
+            }),
+          ),
+        );
+    }
+
+    // Projection marks the turn interrupted, but only provider runtime events
+    // (or an explicit session set) clear session.activeTurnId. Without this,
+    // stop leaves the thread "working" forever — especially when the provider
+    // process is already gone and interrupt could not reach it.
+    if (sessionStillShowsActiveTurn) {
+      yield* setThreadSession({
+        threadId: thread.id,
+        session: {
+          ...session,
+          status: "ready",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+    }
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
