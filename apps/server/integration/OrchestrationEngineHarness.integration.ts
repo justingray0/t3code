@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ApprovalRequestId,
   CodexSettings,
+  CursorSettings,
   ProviderDriverKind,
   type OrchestrationEvent,
   type OrchestrationThread,
@@ -39,6 +40,7 @@ import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSes
 import { ServerSettingsService } from "../src/serverSettings.ts";
 import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
 import { makeCodexAdapter } from "../src/provider/Layers/CodexAdapter.ts";
+import { makeCursorAdapter } from "../src/provider/Layers/CursorAdapter.ts";
 import {
   NoOpProviderEventLoggers,
   ProviderEventLoggers,
@@ -80,6 +82,7 @@ import * as VcsProcess from "../src/vcs/VcsProcess.ts";
 import * as AgentAwarenessRelay from "../src/relay/AgentAwarenessRelay.ts";
 
 const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
+const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
 
 function runGit(cwd: string, args: ReadonlyArray<string>) {
   return NodeChildProcess.execFileSync("git", args, {
@@ -223,6 +226,7 @@ export interface OrchestrationIntegrationHarness {
 interface MakeOrchestrationIntegrationHarnessOptions {
   readonly provider?: ProviderDriverKind;
   readonly realCodex?: boolean;
+  readonly realCursor?: boolean;
 }
 
 export const makeOrchestrationIntegrationHarness = (
@@ -234,7 +238,14 @@ export const makeOrchestrationIntegrationHarness = (
 
     const provider = options?.provider ?? ProviderDriverKind.make("codex");
     const useRealCodex = options?.realCodex === true;
-    const adapterHarness = useRealCodex
+    const useRealCursor = options?.realCursor === true;
+    if (useRealCodex && useRealCursor) {
+      return yield* Effect.die(
+        "makeOrchestrationIntegrationHarness: realCodex and realCursor are mutually exclusive",
+      );
+    }
+    const useRealAdapter = useRealCodex || useRealCursor;
+    const adapterHarness = useRealAdapter
       ? null
       : yield* makeTestProviderAdapterHarness({
           provider,
@@ -265,25 +276,41 @@ export const makeOrchestrationIntegrationHarness = (
     const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
       Layer.provide(ProviderSessionRuntimeRepositoryLive),
     );
-    const realCodexRegistry = Layer.effect(
-      ProviderAdapterRegistry,
-      Effect.gen(function* () {
-        const codexSettings = yield* decodeCodexSettings({});
-        const codexAdapter = yield* makeCodexAdapter(codexSettings);
-        return makeAdapterRegistryMock({
-          [ProviderDriverKind.make("codex")]: codexAdapter,
-        });
-      }),
-    ).pipe(
+    const realAdapterRegistryLayer = useRealCodex
+      ? Layer.effect(
+          ProviderAdapterRegistry,
+          Effect.gen(function* () {
+            const codexSettings = yield* decodeCodexSettings({});
+            const codexAdapter = yield* makeCodexAdapter(codexSettings);
+            return makeAdapterRegistryMock({
+              [ProviderDriverKind.make("codex")]: codexAdapter,
+            });
+          }),
+        )
+      : useRealCursor
+        ? Layer.effect(
+            ProviderAdapterRegistry,
+            Effect.gen(function* () {
+              const cursorSettings = yield* decodeCursorSettings({
+                binaryPath: process.env.CURSOR_AGENT_BIN ?? "agent",
+              });
+              const cursorAdapter = yield* makeCursorAdapter(cursorSettings);
+              return makeAdapterRegistryMock({
+                [ProviderDriverKind.make("cursor")]: cursorAdapter,
+              });
+            }),
+          )
+        : null;
+    const realAdapterRegistry = realAdapterRegistryLayer?.pipe(
       Layer.provideMerge(ServerConfig.layerTest(workspaceDir, rootDir)),
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
     const providerEventLoggersLayer = Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers);
-    const providerLayer = useRealCodex
+    const providerLayer = useRealAdapter
       ? makeProviderServiceLive().pipe(
           Layer.provide(providerSessionDirectoryLayer),
-          Layer.provide(realCodexRegistry),
+          Layer.provide(realAdapterRegistry!),
           Layer.provide(AnalyticsService.layerTest),
           Layer.provide(providerEventLoggersLayer),
         )
