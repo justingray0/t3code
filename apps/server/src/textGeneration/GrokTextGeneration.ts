@@ -1,9 +1,10 @@
 import * as Effect from "effect/Effect";
+import * as Crypto from "effect/Crypto";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import type * as EffectAcpErrors from "effect-acp/errors";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import { type GrokSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
@@ -38,6 +39,17 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const crypto = yield* Crypto.Crypto;
+  const allocateXAiPromptFallbackId = crypto.randomUUIDv4.pipe(
+    Effect.map((uuid) => `t3-xai-prompt-${uuid}`),
+    Effect.mapError(
+      (cause) =>
+        new EffectAcpErrors.AcpTransportError({
+          detail: "Failed to allocate xAI prompt identifier.",
+          cause,
+        }),
+    ),
+  );
 
   const runGrokJson = <S extends Schema.Top>({
     operation,
@@ -59,13 +71,16 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     Effect.gen(function* () {
       const resolvedModel = resolveGrokAcpBaseModelId(modelSelection.model);
       const outputRef = yield* Ref.make("");
-      const runtime = yield* makeGrokAcpRuntime({
-        grokSettings,
-        environment,
-        childProcessSpawner: commandSpawner,
-        cwd,
-        clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
-      });
+      const runtime = yield* makeGrokAcpRuntime(
+        {
+          grokSettings,
+          environment,
+          childProcessSpawner: commandSpawner,
+          cwd,
+          clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
+        },
+        allocateXAiPromptFallbackId,
+      );
 
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;

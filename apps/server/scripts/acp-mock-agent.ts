@@ -20,6 +20,8 @@ const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHO
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
+const emitXAiPromptCompleteWithoutPromptIdThenHang =
+  process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_WITHOUT_PROMPT_ID_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
@@ -30,6 +32,7 @@ const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
 const hangLoadSessionAfterReplay = process.env.T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY === "1";
 const delayLoadSessionAfterReplay = process.env.T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY === "1";
+const fastLoadWithDelayedReplayTail = process.env.T3_ACP_FAST_LOAD_WITH_DELAYED_REPLAY_TAIL === "1";
 const loadSessionDelayMs = Number(process.env.T3_ACP_LOAD_SESSION_DELAY_MS ?? "5000");
 const emitStaleXAiPromptCompleteBeforeSecondHang =
   process.env.T3_ACP_EMIT_STALE_XAI_PROMPT_COMPLETE_BEFORE_SECOND_HANG === "1";
@@ -362,6 +365,41 @@ const program = Effect.gen(function* () {
           configOptions: configOptions(),
         };
       }
+      if (fastLoadWithDelayedReplayTail) {
+        emitLoadReplayNotifications(requestedSessionId);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "replay-head" },
+          },
+        });
+        const response = {
+          modes: modeState(),
+          models: modelState(),
+          configOptions: configOptions(),
+        };
+        void Effect.runFork(
+          Effect.gen(function* () {
+            yield* Effect.sleep("30 millis");
+            writeJsonRpcNotification("session/update", {
+              _meta: { isReplay: true },
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "delayed replay tail" },
+              },
+            });
+            writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+              sessionId: requestedSessionId,
+              promptId: "replay-stale-prompt-id",
+              stopReason: "end_turn",
+              agentResult: null,
+            });
+          }).pipe(Effect.provide(NodeServices.layer)),
+        );
+        return response;
+      }
       if (emitLoadReplay) {
         emitLoadReplayNotifications(requestedSessionId);
       }
@@ -519,6 +557,15 @@ const program = Effect.gen(function* () {
       }
 
       if (hangPromptForever || (hangFirstPromptForever && promptCount === 1)) {
+        return yield* Effect.never;
+      }
+
+      if (emitXAiPromptCompleteWithoutPromptIdThenHang) {
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          stopReason: "end_turn",
+          agentResult: null,
+        });
         return yield* Effect.never;
       }
 

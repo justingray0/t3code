@@ -50,8 +50,20 @@ function resolveGrokAuthMethodId(environment: NodeJS.ProcessEnv | undefined): st
     : GROK_AUTH_METHOD_CACHED_TOKEN;
 }
 
+export const sequentialXAiPromptFallbackIdAllocator = (): Effect.Effect<string, never> => {
+  let next = 0;
+  return Effect.sync(() => {
+    next += 1;
+    return `t3-xai-prompt-${next}`;
+  });
+};
+
 export const makeGrokAcpRuntime = (
   input: GrokAcpRuntimeInput,
+  allocatePromptFallbackId: Effect.Effect<
+    string,
+    EffectAcpErrors.AcpError
+  > = sequentialXAiPromptFallbackIdAllocator(),
 ): Effect.Effect<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
@@ -72,7 +84,7 @@ export const makeGrokAcpRuntime = (
     const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
       Effect.provide(acpContext),
     );
-    return yield* makeXAiPromptCompletionRuntime(runtime);
+    return yield* makeXAiPromptCompletionRuntime(runtime, allocatePromptFallbackId);
   });
 
 export function resolveGrokAcpBaseModelId(model: string | null | undefined): string {
