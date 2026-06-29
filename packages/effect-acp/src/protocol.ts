@@ -337,12 +337,29 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     return Queue.offer(serverQueue, message).pipe(Effect.asVoid);
   };
 
+  // The RpcClient and raw ext requests only ever issue numeric request ids, so
+  // a response whose id is not a base-10 number cannot match anything we sent.
+  // Some agents (e.g. grok) emit unsolicited responses with symbolic ids such
+  // as `"skills-reload"`; forwarding those to the RpcClient makes it fail while
+  // resolving the id, which tears down the response loop and stalls every
+  // in-flight request. Drop untracked non-numeric responses instead.
+  const forwardUntrackedResponse = (requestId: string, forward: () => Effect.Effect<void>) => {
+    if (/^[0-9]+$/.test(requestId)) {
+      return forward();
+    }
+    return Effect.logDebug("Dropping untracked ACP response with non-numeric request id").pipe(
+      Effect.annotateLogs({ requestId }),
+    );
+  };
+
   const handleExitEncoded = (message: RpcMessage.ResponseExitEncoded) =>
     Ref.get(extPending).pipe(
       Effect.flatMap((pending) => {
         const pendingRequest = pending.get(message.requestId);
         if (!pendingRequest) {
-          return Queue.offer(clientQueue, message).pipe(Effect.asVoid);
+          return forwardUntrackedResponse(message.requestId, () =>
+            Queue.offer(clientQueue, message).pipe(Effect.asVoid),
+          );
         }
         if (message.exit._tag === "Success") {
           return completeExtPendingSuccess(message.requestId, message.exit.value);
@@ -389,7 +406,9 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
                     message.requestId,
                   ),
                 )
-              : Queue.offer(clientQueue, message).pipe(Effect.asVoid);
+              : forwardUntrackedResponse(message.requestId, () =>
+                  Queue.offer(clientQueue, message).pipe(Effect.asVoid),
+                );
           }),
         );
       case "Defect":
