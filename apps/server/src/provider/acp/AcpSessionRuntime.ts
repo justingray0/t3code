@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -29,6 +30,8 @@ import {
   parseSessionUpdateEvent,
   sessionUpdateIsReplay,
   waitForSessionLoadReplayIdle,
+  touchSessionLoadReplayActivity,
+  waitForSessionLoadReplayToSettle,
   type SessionLoadGate,
   type AcpParsedSessionEvent,
   type AcpSessionModeState,
@@ -242,6 +245,10 @@ export class AcpSessionRuntime extends Context.Service<
       method: string,
       payload: unknown,
     ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+    /** True while session/load replay is still settling and should suppress side effects. */
+    readonly isSessionLoadReplayActive: Effect.Effect<boolean>;
+    /** Extends the session/load replay idle window when non-session/update traffic arrives. */
+    readonly touchSessionLoadReplayActivity: Effect.Effect<void>;
   }
 >()("t3/provider/acp/AcpSessionRuntime") {}
 
@@ -360,14 +367,7 @@ export const make = (
       Effect.gen(function* () {
         const gate = yield* Ref.get(sessionLoadGateRef);
         if (Option.isSome(gate) && gate.value.active) {
-          const lastActivityAtMillis = yield* Clock.currentTimeMillis;
-          yield* Ref.set(
-            sessionLoadGateRef,
-            Option.some({
-              ...gate.value,
-              lastActivityAtMillis,
-            }),
-          );
+          yield* touchSessionLoadReplayActivity({ gateRef: sessionLoadGateRef });
           return;
         }
         if (sessionUpdateIsReplay(notification)) {
@@ -578,11 +578,35 @@ export const make = (
           const idleFiber = yield* waitForSessionLoadReplayIdle({
             gateRef: sessionLoadGateRef,
           }).pipe(Effect.forkIn(runtimeScope));
-          const loaded = yield* Effect.raceFirst(
-            acp.agent.loadSession(loadPayload),
-            Fiber.join(idleFiber),
-          ).pipe(
-            Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)),
+          const rpcFiber = yield* acp.agent
+            .loadSession(loadPayload)
+            .pipe(Effect.forkIn(runtimeScope));
+          const loaded = yield* Effect.gen(function* () {
+            const winner = yield* Effect.race(
+              Fiber.await(rpcFiber).pipe(Effect.map((exit) => ({ _tag: "Rpc" as const, exit }))),
+              Fiber.join(idleFiber).pipe(
+                Effect.map((synthetic) => ({ _tag: "Idle" as const, synthetic })),
+              ),
+            );
+
+            if (winner._tag === "Idle") {
+              yield* Fiber.interrupt(rpcFiber).pipe(Effect.ignore);
+              return winner.synthetic;
+            }
+
+            if (Exit.isFailure(winner.exit)) {
+              yield* Fiber.interrupt(idleFiber).pipe(Effect.ignore);
+              return yield* Effect.failCause(winner.exit.cause);
+            }
+
+            const rpcCompletedAtMillis = yield* Clock.currentTimeMillis;
+            yield* waitForSessionLoadReplayToSettle({
+              gateRef: sessionLoadGateRef,
+              baselineMillis: rpcCompletedAtMillis,
+            });
+            yield* Fiber.interrupt(idleFiber).pipe(Effect.ignore);
+            return winner.exit.value;
+          }).pipe(
             Effect.timeoutOption(sessionLoadTimeout),
             Effect.flatMap((result) =>
               Option.match(result, {
@@ -794,6 +818,12 @@ export const make = (
       request: (method, payload) =>
         runLoggedRequest(method, payload, acp.raw.request(method, payload)),
       notify: acp.raw.notify,
+      isSessionLoadReplayActive: Ref.get(sessionLoadGateRef).pipe(
+        Effect.map((gate) => Option.isSome(gate) && gate.value.active),
+      ),
+      touchSessionLoadReplayActivity: touchSessionLoadReplayActivity({
+        gateRef: sessionLoadGateRef,
+      }),
     } satisfies AcpSessionRuntime["Service"];
   });
 

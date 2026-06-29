@@ -202,6 +202,19 @@ function assistantSegmentMessageId(baseKey: string, segmentIndex: number): Messa
     segmentIndex === 0 ? `assistant:${baseKey}` : `assistant:${baseKey}:segment:${segmentIndex}`,
   );
 }
+
+function assistantMessageIdFromEvent(event: ProviderRuntimeEvent): MessageId {
+  return assistantSegmentMessageId(assistantSegmentBaseKeyFromEvent(event), 0);
+}
+
+function nextAssistantSegmentIndexFromItemId(itemId: string | undefined): number {
+  if (!itemId) {
+    return 1;
+  }
+  const match = itemId.match(/:segment:(\d+)$/);
+  return match ? Number(match[1]) + 1 : 1;
+}
+
 function buildContextWindowActivityPayload(
   event: ProviderRuntimeEvent,
 ): ThreadTokenUsageSnapshot | undefined {
@@ -1364,6 +1377,36 @@ const make = Effect.gen(function* () {
           : undefined;
       const proposedPlanDelta =
         event.type === "turn.proposed.delta" ? event.payload.delta : undefined;
+
+      if (event.type === "item.started" && event.payload.itemType === "assistant_message") {
+        const turnId = toTurnId(event.turnId);
+        if (turnId) {
+          const messageId = assistantMessageIdFromEvent(event);
+          const detailedThread = yield* getLoadedThreadDetail();
+          const existingMessage = detailedThread
+            ? findMessageById(detailedThread.messages, messageId)
+            : undefined;
+          if (existingMessage && !existingMessage.streaming) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.message.assistant.reset",
+              commandId: yield* providerCommandId(event, "assistant-reset-on-item-started"),
+              threadId: thread.id,
+              messageId,
+              turnId,
+              createdAt: now,
+            });
+          }
+          yield* clearBufferedAssistantText(messageId);
+          yield* rememberAssistantMessageId(thread.id, turnId, messageId);
+          yield* setAssistantSegmentStateForTurn(thread.id, turnId, {
+            baseKey: assistantSegmentBaseKeyFromEvent(event),
+            nextSegmentIndex: nextAssistantSegmentIndexFromItemId(
+              event.itemId !== undefined ? String(event.itemId) : undefined,
+            ),
+            activeMessageId: messageId,
+          });
+        }
+      }
 
       if (assistantDelta && assistantDelta.length > 0) {
         const turnId = toTurnId(event.turnId);

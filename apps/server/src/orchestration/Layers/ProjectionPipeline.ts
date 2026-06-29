@@ -819,6 +819,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const nextText = Option.match(existingMessage, {
             onNone: () => event.payload.text,
             onSome: (message) => {
+              if (event.payload.reset === true) {
+                return event.payload.text;
+              }
               if (event.payload.streaming) {
                 return `${message.text}${event.payload.text}`;
               }

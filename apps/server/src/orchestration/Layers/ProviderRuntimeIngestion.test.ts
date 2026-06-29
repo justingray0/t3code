@@ -2072,6 +2072,119 @@ describe("ProviderRuntimeIngestion", () => {
     ).toBe(" after approval");
   });
 
+  it("resets a completed assistant segment when item.started arrives again after resume", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const startedAt = "2026-03-28T08:00:00.000Z";
+    const resumedAt = "2026-03-28T08:00:10.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-resume-assistant-segment"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: startedAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-resume-assistant-segment"),
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-resume-assistant-segment",
+    );
+
+    const resumedItemId = asItemId("assistant:session-1:segment:3");
+    const resumedMessageId = "assistant:assistant:session-1:segment:3";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-resume-assistant-segment-initial"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: startedAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-resume-assistant-segment"),
+      itemId: resumedItemId,
+      payload: {
+        streamKind: "assistant_text",
+        delta: "stale summary before restart",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-resume-assistant-segment-initial"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: startedAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-resume-assistant-segment"),
+      itemId: resumedItemId,
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === resumedMessageId &&
+          !message.streaming &&
+          message.text === "stale summary before restart",
+      ),
+    );
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-message-started-resume-assistant-segment"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: resumedAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-resume-assistant-segment"),
+      itemId: resumedItemId,
+      payload: {
+        itemType: "assistant_message",
+        status: "inProgress",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-resume-assistant-segment-after-resume"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: resumedAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-resume-assistant-segment"),
+      itemId: resumedItemId,
+      payload: {
+        streamKind: "assistant_text",
+        delta: "fresh answer after resume",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-resume-assistant-segment-after-resume"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: resumedAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-resume-assistant-segment"),
+      itemId: resumedItemId,
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === resumedMessageId &&
+          !message.streaming &&
+          message.text === "fresh answer after resume",
+      ),
+    );
+    expect(
+      thread.messages.find((message: ProviderRuntimeTestMessage) => message.id === resumedMessageId)
+        ?.text,
+    ).toBe("fresh answer after resume");
+  });
+
   it("streams assistant deltas when thread.turn.start requests streaming mode", async () => {
     const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
     const now = "2026-01-01T00:00:00.000Z";
