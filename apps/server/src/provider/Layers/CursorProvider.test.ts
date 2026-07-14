@@ -418,7 +418,7 @@ describe("buildCursorCapabilitiesFromConfigOptions", () => {
             { id: "high", label: "High" },
             { id: "max", label: "Max", isDefault: true },
           ]),
-          booleanDescriptor("fastMode", "Fast", true),
+          booleanDescriptor("fastMode", "Fast", false),
           booleanDescriptor("thinking", "Thinking", true),
         ],
       }),
