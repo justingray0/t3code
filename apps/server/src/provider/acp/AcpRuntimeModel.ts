@@ -465,6 +465,62 @@ export interface SessionLoadGate {
   readonly initializeResult: EffectAcpSchema.InitializeResponse;
 }
 
+export function sessionLoadReplaySettleActivityMillis(
+  lastActivityAtMillis: number | undefined,
+  baselineMillis: number,
+): number {
+  return Math.max(lastActivityAtMillis ?? 0, baselineMillis);
+}
+
+/**
+ * Waits until session/load replay notifications have been quiet for `idleGap`.
+ * `baselineMillis` is recorded when the load RPC completes. The idle window must
+ * start after both the last replay activity and RPC completion, so a slow RPC
+ * cannot inherit replay quiet time that elapsed while the request was in flight.
+ */
+export const waitForSessionLoadReplayToSettle = (input: {
+  readonly gateRef: Ref.Ref<Option.Option<SessionLoadGate>>;
+  readonly baselineMillis: number;
+}): Effect.Effect<void, never> =>
+  Effect.gen(function* () {
+    const pollInterval = Duration.millis(25);
+    while (true) {
+      const gate = yield* Ref.get(input.gateRef);
+      if (Option.isNone(gate) || !gate.value.active) {
+        return;
+      }
+      const idleGapMillis = Duration.toMillis(gate.value.idleGap);
+      const nowMillis = yield* Clock.currentTimeMillis;
+      const lastActivity = sessionLoadReplaySettleActivityMillis(
+        gate.value.lastActivityAtMillis,
+        input.baselineMillis,
+      );
+      if (nowMillis - lastActivity >= idleGapMillis) {
+        return;
+      }
+      yield* Effect.sleep(pollInterval);
+    }
+  });
+
+/** Records inbound protocol activity while the session/load replay gate is active. */
+export const touchSessionLoadReplayActivity = (input: {
+  readonly gateRef: Ref.Ref<Option.Option<SessionLoadGate>>;
+}): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const gate = yield* Ref.get(input.gateRef);
+    if (Option.isNone(gate) || !gate.value.active) {
+      return;
+    }
+    const lastActivityAtMillis = yield* Clock.currentTimeMillis;
+    yield* Ref.set(
+      input.gateRef,
+      Option.some({
+        ...gate.value,
+        lastActivityAtMillis,
+      }),
+    );
+  });
+
 export const waitForSessionLoadReplayIdle = (input: {
   readonly gateRef: Ref.Ref<Option.Option<SessionLoadGate>>;
 }): Effect.Effect<EffectAcpSchema.LoadSessionResponse, never> =>
