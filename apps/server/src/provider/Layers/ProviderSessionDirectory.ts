@@ -125,6 +125,10 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         issue: "providerInstanceId is required for provider session runtime bindings.",
       });
     }
+    const freshExisting = yield* repository
+      .getByThreadId({ threadId: resolvedThreadId })
+      .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:getByThreadId")));
+    const freshRuntime = Option.getOrUndefined(freshExisting);
     yield* repository
       .upsert({
         threadId: resolvedThreadId,
@@ -133,15 +137,19 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         adapterKey:
           binding.adapterKey ??
           (providerChanged ? binding.provider : (existingRuntime?.adapterKey ?? binding.provider)),
-        runtimeMode: binding.runtimeMode ?? existingRuntime?.runtimeMode ?? "full-access",
-        status: binding.status ?? existingRuntime?.status ?? "running",
+        runtimeMode:
+          binding.runtimeMode ??
+          freshRuntime?.runtimeMode ??
+          existingRuntime?.runtimeMode ??
+          "full-access",
+        status: binding.status ?? freshRuntime?.status ?? existingRuntime?.status ?? "running",
         lastSeenAt: now,
         resumeCursor:
           binding.resumeCursor !== undefined
             ? binding.resumeCursor
-            : (existingRuntime?.resumeCursor ?? null),
+            : (freshRuntime?.resumeCursor ?? existingRuntime?.resumeCursor ?? null),
         runtimePayload: mergeRuntimePayload(
-          existingRuntime?.runtimePayload ?? null,
+          freshRuntime?.runtimePayload ?? existingRuntime?.runtimePayload ?? null,
           binding.runtimePayload,
         ),
       })

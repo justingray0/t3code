@@ -8,6 +8,7 @@ import {
   parsePermissionRequest,
   parseSessionModeState,
   parseSessionUpdateEvent,
+  sessionLoadReplaySettleActivityMillis,
   sessionUpdateIsReplay,
   syntheticLoadSessionResponseFromInitialize,
 } from "./AcpRuntimeModel.ts";
@@ -334,6 +335,16 @@ describe("AcpRuntimeModel", () => {
         },
       },
     ]);
+  });
+
+  it("requires replay idle after load RPC completion even when replay stopped earlier", () => {
+    const idleGapMillis = 2_000;
+    const replayAt = 0;
+    const rpcAt = 2_000;
+    const settleFrom = sessionLoadReplaySettleActivityMillis(replayAt, rpcAt);
+
+    expect(rpcAt - settleFrom >= idleGapMillis).toBe(false);
+    expect(rpcAt + idleGapMillis - settleFrom >= idleGapMillis).toBe(true);
   });
 
   it("keeps permission request parsing compatible with loose extension payloads", () => {
