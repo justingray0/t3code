@@ -302,7 +302,6 @@ export function buildCursorCapabilitiesFromConfigOptions(
   const thinkingOption = configOptions.find(
     (option) => option.category === "model_config" && isCursorThinkingConfigOption(option),
   );
-  const fastCurrentValue = getBooleanCurrentValue(fastOption);
   const thinkingCurrentValue = getBooleanCurrentValue(thinkingOption);
   const optionDescriptors = [
     ...(reasoningEffortLevels.length > 0
@@ -323,18 +322,15 @@ export function buildCursorCapabilitiesFromConfigOptions(
           }),
         ]
       : []),
+    // Cursor Agent advertises Fast on for models like Composer 2.5 (~6x token
+    // cost). Prefer Standard in t3code; users can still toggle Fast on.
     ...(fastOption && isBooleanLikeConfigOption(fastOption)
       ? [
-          typeof fastCurrentValue === "boolean"
-            ? buildBooleanOptionDescriptor({
-                id: "fastMode",
-                label: fastOption.name?.trim() || "Fast Mode",
-                currentValue: fastCurrentValue,
-              })
-            : buildBooleanOptionDescriptor({
-                id: "fastMode",
-                label: fastOption.name?.trim() || "Fast Mode",
-              }),
+          buildBooleanOptionDescriptor({
+            id: "fastMode",
+            label: fastOption.name?.trim() || "Fast Mode",
+            currentValue: false,
+          }),
         ]
       : []),
     ...(thinkingOption && isBooleanLikeConfigOption(thinkingOption)
