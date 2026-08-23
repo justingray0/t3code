@@ -50,8 +50,16 @@ describe("shouldBundleCliDependency", () => {
       "@clerk/electron-passkeys",
       "msgpackr-extract",
       "@msgpackr-extract/msgpackr-extract-win32-x64",
+      "@cursor/sdk",
+      "@cursor/sdk-linux-x64",
     ]) {
       assert.strictEqual(shouldBundleCliDependency(id), false, id);
+    }
+  });
+
+  it("still bundles ordinary dependencies of @cursor/sdk", () => {
+    for (const id of ["zod", "@bufbuild/protobuf", "@connectrpc/connect", "undici"]) {
+      assert.strictEqual(shouldBundleCliDependency(id), true, id);
     }
   });
 
@@ -87,7 +95,7 @@ describe("selectCliRuntimeExternalDependencies", () => {
   it("selects every external root declared by the server", () => {
     assert.deepStrictEqual(
       Object.keys(selectCliRuntimeExternalDependencies(serverPackageJson.dependencies)).sort(),
-      ["@ff-labs/fff-node", "msgpackr-extract", "node-pty"],
+      ["@cursor/sdk", "@ff-labs/fff-node", "msgpackr-extract", "node-pty"],
     );
   });
 });
@@ -194,6 +202,15 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
           ...(manifest.peerDependencies ?? {}),
         };
         for (const dependency of Object.keys(declared)) {
+          // @cursor/sdk stays external for its webpack chunks / platform
+          // natives, but its ordinary JS deps (zod, connect, …) remain
+          // bundleable for the rest of the server. The Windows sidecar stages
+          // `@cursor/sdk` as a production root, so pnpm still installs those
+          // deps on disk for the SDK's own imports. Only @cursor/* edges must
+          // stay in the runtime-external set.
+          if (name.startsWith("@cursor/") && !dependency.startsWith("@cursor/")) {
+            continue;
+          }
           if (!isRuntimeExternal(dependency)) {
             violations.push(`${name} -> ${dependency}`);
           }
