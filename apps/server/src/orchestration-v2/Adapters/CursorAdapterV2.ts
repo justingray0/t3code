@@ -1,11 +1,12 @@
-import type {
-  AgentMessage,
-  AgentOptions,
-  InteractionUpdate,
-  McpServerConfig,
-  RunResult,
-  SDKUserMessage,
-  ToolCall,
+import {
+  AuthenticationError,
+  type AgentMessage,
+  type AgentOptions,
+  type InteractionUpdate,
+  type McpServerConfig,
+  type RunResult,
+  type SDKUserMessage,
+  type ToolCall,
 } from "@cursor/sdk";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
@@ -330,6 +331,80 @@ export function makeCursorAgentOptions(input: {
     },
     ...(mcpServers === undefined ? {} : { mcpServers }),
   };
+}
+
+/** Max run duration treated as an instant stale-auth failure when the SDK omits error details. */
+export const CURSOR_STALE_AUTH_INSTANT_FAILURE_MS = 5_000;
+
+export function isStaleCursorAuthErrorMessage(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return false;
+  }
+  return (
+    normalized.includes("authentication error") ||
+    normalized.includes("error_not_logged_in") ||
+    normalized.includes("not logged in") ||
+    normalized.includes("unauthorized") ||
+    normalized.includes("unauthenticated")
+  );
+}
+
+export function isStaleCursorAuthError(error: unknown): boolean {
+  if (error instanceof AuthenticationError) {
+    return true;
+  }
+  if (typeof error === "string") {
+    return isStaleCursorAuthErrorMessage(error);
+  }
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  const record = error as Record<string, unknown>;
+  const message = typeof record.message === "string" ? record.message : "";
+  if (message.length > 0 && isStaleCursorAuthErrorMessage(message)) {
+    return true;
+  }
+  const code = typeof record.code === "string" ? record.code.trim().toLowerCase() : "";
+  return (
+    code.includes("unauthenticated") ||
+    code.includes("not_logged_in") ||
+    code.includes("authentication")
+  );
+}
+
+export function cursorTurnHasStreamedOutput(input: {
+  readonly assistant: { readonly nextSegment: number };
+  readonly reasoning: { readonly nextSegment: number };
+  readonly tools: { readonly size: number };
+}): boolean {
+  return input.assistant.nextSegment > 0 || input.reasoning.nextSegment > 0 || input.tools.size > 0;
+}
+
+export function isStaleCursorAuthRunResult(result: RunResult, hasStreamedOutput: boolean): boolean {
+  if (result.status !== "error" || hasStreamedOutput) {
+    return false;
+  }
+  if (result.error === undefined) {
+    return (result.durationMs ?? Number.POSITIVE_INFINITY) <= CURSOR_STALE_AUTH_INSTANT_FAILURE_MS;
+  }
+  return isStaleCursorAuthError(result.error);
+}
+
+export function shouldRetryCursorTurnAfterStaleAuth(input: {
+  readonly result: RunResult;
+  readonly context: {
+    readonly staleAuthRetried: boolean;
+    readonly interrupted: boolean;
+    readonly assistant: { readonly nextSegment: number };
+    readonly reasoning: { readonly nextSegment: number };
+    readonly tools: { readonly size: number };
+  };
+}): boolean {
+  if (input.context.staleAuthRetried || input.context.interrupted) {
+    return false;
+  }
+  return isStaleCursorAuthRunResult(input.result, cursorTurnHasStreamedOutput(input.context));
 }
 
 function stableJson(value: unknown): string {
@@ -792,7 +867,7 @@ interface ActiveCursorTextStream {
 
 interface ActiveCursorTurn {
   readonly input: ProviderAdapterV2TurnInput;
-  readonly run: CursorAgentSdkRun;
+  run: CursorAgentSdkRun;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly startedAt: DateTime.Utc;
   readonly completed: Deferred.Deferred<void, never>;
@@ -802,6 +877,7 @@ interface ActiveCursorTurn {
   readonly reasoning: ActiveCursorTextStream;
   interrupted: boolean;
   finalized: boolean;
+  staleAuthRetried: boolean;
 }
 
 interface CursorLiveAgent {
@@ -2016,6 +2092,110 @@ export function makeCursorAdapterV2(
         });
 
         let cursorSkillNames: ReadonlySet<string> | undefined;
+
+        const resetLiveAgent = Effect.fnUntraced(function* () {
+          const existing = yield* Ref.get(liveAgent);
+          if (existing === null) {
+            return;
+          }
+          yield* existing.session.close.pipe(Effect.ignore);
+          yield* Ref.set(liveAgent, null);
+        });
+
+        const retryTurnAfterStaleAuth = Effect.fnUntraced(function* (retryInput: {
+          readonly context: ActiveCursorTurn;
+          readonly message: string | SDKUserMessage;
+          readonly turnInput: ProviderAdapterV2TurnInput;
+          readonly mcpServers: ReturnType<typeof cursorMcpServers>;
+        }) {
+          retryInput.context.staleAuthRetried = true;
+          yield* Effect.logWarning("orchestration-v2.cursor-stale-auth-retry", {
+            providerSessionId: input.providerSessionId,
+            providerThreadId: retryInput.turnInput.providerThread.id,
+            providerTurnId: retryInput.context.providerTurnId,
+            runId: retryInput.context.run.runId,
+          });
+          yield* resetLiveAgent();
+          const agent = yield* openAgent({
+            operation: "resume",
+            agentId: nativeThreadId(retryInput.turnInput.providerThread),
+            threadId: retryInput.turnInput.threadId,
+            modelSelection: retryInput.turnInput.modelSelection,
+            runtimePolicy: retryInput.turnInput.runtimePolicy,
+          });
+          const retryRun = yield* agent.session.send({
+            message: retryInput.message,
+            options: {
+              model: cursorSdkModelSelection(retryInput.turnInput.modelSelection),
+              mode:
+                retryInput.turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
+              ...(retryInput.mcpServers === undefined ? {} : { mcpServers: retryInput.mcpServers }),
+            },
+            onDelta: (update) => handleInteractionUpdate(retryInput.context, update),
+          });
+          retryInput.context.run = retryRun;
+          return yield* retryRun.wait;
+        });
+
+        const completeCursorRun = Effect.fnUntraced(function* (completeInput: {
+          readonly context: ActiveCursorTurn;
+          readonly message: string | SDKUserMessage;
+          readonly turnInput: ProviderAdapterV2TurnInput;
+          readonly mcpServers: ReturnType<typeof cursorMcpServers>;
+        }) {
+          const initialResult = yield* completeInput.context.run.wait.pipe(
+            Effect.catchAll((cause) =>
+              !completeInput.context.staleAuthRetried &&
+              !completeInput.context.interrupted &&
+              isStaleCursorAuthError(cause) &&
+              !cursorTurnHasStreamedOutput(completeInput.context)
+                ? retryTurnAfterStaleAuth({
+                    context: completeInput.context,
+                    message: completeInput.message,
+                    turnInput: completeInput.turnInput,
+                    mcpServers: completeInput.mcpServers,
+                  })
+                : Effect.fail(cause),
+            ),
+          );
+          const result = shouldRetryCursorTurnAfterStaleAuth({
+            result: initialResult,
+            context: completeInput.context,
+          })
+            ? yield* retryTurnAfterStaleAuth({
+                context: completeInput.context,
+                message: completeInput.message,
+                turnInput: completeInput.turnInput,
+                mcpServers: completeInput.mcpServers,
+              })
+            : initialResult;
+          if (
+            completeInput.context.assistant.nextSegment === 0 &&
+            result.result !== undefined &&
+            result.result.length > 0
+          ) {
+            yield* appendTextSegment({
+              context: completeInput.context,
+              stream: completeInput.context.assistant,
+              kind: "assistant",
+              text: result.result,
+            });
+          }
+          const status = terminalStatus(completeInput.context, result);
+          yield* finalizeTurn({
+            context: completeInput.context,
+            status,
+            ...(status === "failed"
+              ? {
+                  failure: makeProviderFailure({
+                    cause: (result as { readonly error?: unknown }).error,
+                    class: "provider_error",
+                  }),
+                }
+              : {}),
+          });
+        });
+
         const resolveUserMessage = Effect.fnUntraced(function* (
           turnInput: ProviderAdapterV2TurnInput,
         ) {
@@ -2153,6 +2333,7 @@ export function makeCursorAdapterV2(
               },
               interrupted: false,
               finalized: false,
+              staleAuthRetried: false,
             };
             yield* Ref.set(activeTurn, context);
             yield* emitProviderEvent({
@@ -2178,52 +2359,23 @@ export function makeCursorAdapterV2(
               yield* handleInteractionUpdate(context, update);
             }
 
-            yield* sdkRun.wait.pipe(
-              Effect.flatMap((result) =>
+            yield* completeCursorRun({
+              context,
+              message,
+              turnInput,
+              mcpServers,
+            }).pipe(
+              Effect.catchAll((cause) =>
                 Effect.gen(function* () {
-                  if (
-                    context !== null &&
-                    context.assistant.nextSegment === 0 &&
-                    result.result !== undefined &&
-                    result.result.length > 0
-                  ) {
-                    yield* appendTextSegment({
-                      context,
-                      stream: context.assistant,
-                      kind: "assistant",
-                      text: result.result,
-                    });
-                  }
-                  if (context !== null) {
-                    const status = terminalStatus(context, result);
-                    yield* finalizeTurn({
-                      context,
-                      status,
-                      ...(status === "failed"
-                        ? {
-                            failure: makeProviderFailure({
-                              cause: (result as { readonly error?: unknown }).error,
-                              class: "provider_error",
-                            }),
-                          }
-                        : {}),
-                    });
-                  }
-                }),
-              ),
-              Effect.catch((cause) =>
-                Effect.gen(function* () {
-                  if (context !== null) {
-                    yield* finalizeTurn({
-                      context,
-                      status: context.interrupted ? "interrupted" : "failed",
-                      ...(context.interrupted
-                        ? {}
-                        : {
-                            failure: makeProviderFailure({ cause, class: "transport_error" }),
-                          }),
-                    });
-                  }
+                  yield* finalizeTurn({
+                    context,
+                    status: context.interrupted ? "interrupted" : "failed",
+                    ...(context.interrupted
+                      ? {}
+                      : {
+                          failure: makeProviderFailure({ cause, class: "transport_error" }),
+                        }),
+                  });
                   yield* Effect.logWarning("orchestration-v2.cursor-run-failed", {
                     providerSessionId: input.providerSessionId,
                     providerThreadId: turnInput.providerThread.id,

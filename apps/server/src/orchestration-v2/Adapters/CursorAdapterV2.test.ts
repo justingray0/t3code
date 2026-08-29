@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { AuthenticationError } from "@cursor/sdk";
 import {
   CursorSettings,
   EnvironmentId,
@@ -29,9 +30,14 @@ import {
   cursorMcpServers,
   cursorRuntimeAgentPolicy,
   cursorSdkModelSelection,
+  cursorTurnHasStreamedOutput,
+  isStaleCursorAuthError,
+  isStaleCursorAuthErrorMessage,
+  isStaleCursorAuthRunResult,
   makeCursorAgentOptions,
   makeCursorAdapterV2,
   nestedToolCallFromEnvelope,
+  shouldRetryCursorTurnAfterStaleAuth,
 } from "./CursorAdapterV2.ts";
 import { isCursorCancellationError, loggedCursorAgentOptions } from "./CursorAgentSdk.ts";
 
@@ -301,6 +307,108 @@ describe("CursorAdapterV2", () => {
     } finally {
       McpProviderSession.clearMcpProviderSession(threadId);
     }
+  });
+
+  it("detects stale Cursor auth failures that can be retried after idle sessions", () => {
+    const emptyContext = {
+      staleAuthRetried: false,
+      interrupted: false,
+      assistant: { nextSegment: 0 },
+      reasoning: { nextSegment: 0 },
+      tools: { size: 0 },
+    };
+
+    assert.isTrue(
+      isStaleCursorAuthErrorMessage(
+        "Authentication error If you are logged in, try logging out and back in.",
+      ),
+    );
+    assert.isTrue(isStaleCursorAuthError(new AuthenticationError("session expired")));
+    assert.isTrue(
+      isStaleCursorAuthRunResult(
+        {
+          id: "run-auth",
+          status: "error",
+          error: {
+            message: "Authentication error If you are logged in, try logging out and back in.",
+          },
+          durationMs: 875,
+        },
+        false,
+      ),
+    );
+    assert.isTrue(
+      isStaleCursorAuthRunResult(
+        {
+          id: "run-opaque",
+          status: "error",
+          durationMs: 270,
+        },
+        false,
+      ),
+    );
+    assert.isFalse(
+      isStaleCursorAuthRunResult(
+        {
+          id: "run-slow",
+          status: "error",
+          durationMs: 12_000,
+        },
+        false,
+      ),
+    );
+    assert.isTrue(
+      shouldRetryCursorTurnAfterStaleAuth({
+        result: {
+          id: "run-auth",
+          status: "error",
+          error: {
+            message: "Authentication error If you are logged in, try logging out and back in.",
+          },
+          durationMs: 875,
+        },
+        context: emptyContext,
+      }),
+    );
+    assert.isFalse(
+      shouldRetryCursorTurnAfterStaleAuth({
+        result: {
+          id: "run-auth",
+          status: "error",
+          error: {
+            message: "Authentication error If you are logged in, try logging out and back in.",
+          },
+          durationMs: 875,
+        },
+        context: {
+          ...emptyContext,
+          staleAuthRetried: true,
+        },
+      }),
+    );
+    assert.isFalse(
+      shouldRetryCursorTurnAfterStaleAuth({
+        result: {
+          id: "run-auth",
+          status: "error",
+          error: {
+            message: "Authentication error If you are logged in, try logging out and back in.",
+          },
+          durationMs: 875,
+        },
+        context: {
+          ...emptyContext,
+          assistant: { nextSegment: 1 },
+        },
+      }),
+    );
+    assert.isTrue(
+      cursorTurnHasStreamedOutput({
+        assistant: { nextSegment: 1 },
+        reasoning: { nextSegment: 0 },
+        tools: { size: 0 },
+      }),
+    );
   });
 
   it("recognizes direct and SDK-wrapped abort failures as cancellation", () => {
