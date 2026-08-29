@@ -2130,7 +2130,7 @@ export function makeCursorAdapterV2(
           readonly mcpServers: ReturnType<typeof cursorMcpServers>;
         }) {
           const initialResult = yield* completeInput.context.run.wait.pipe(
-            Effect.catchAll((cause) =>
+            Effect.catch((cause) =>
               !completeInput.context.staleAuthRetried &&
               !completeInput.context.interrupted &&
               isStaleCursorAuthError(cause) &&
@@ -2328,7 +2328,7 @@ export function makeCursorAdapterV2(
               turnInput,
               mcpServers,
             }).pipe(
-              Effect.catchAll((cause) =>
+              Effect.catch((cause) =>
                 Effect.gen(function* () {
                   yield* finalizeTurn({
                     context,
