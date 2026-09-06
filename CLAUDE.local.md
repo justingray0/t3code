@@ -14,7 +14,7 @@ conflicts when syncing `upstream/main`. Auto-loaded by Claude Code alongside
 ## Syncing upstream
 
 Preferred: reset fork `main` to `upstream/main`, force-push, then re-apply
-fork-only fixes as new PRs (see reapply/* branches). Cherry-picking large
+fork-only fixes as new PRs (see reapply/\* branches). Cherry-picking large
 provider/resume patches onto a 400+ commit gap is usually worse than re-porting.
 
 When resolving `pnpm-lock.yaml` conflicts during a merge-based sync, never take
@@ -32,7 +32,7 @@ so `patchedDependencies` hashes match on-disk patches (needed for
 
 - Tailscale Serve ⇒ `remote-reachable` auth even on loopback bind
 - Drop non-numeric untracked ACP responses (Grok `skills-reload`)
-- Codex standalone installer: `codex update` native path
+- Codex standalone installer: `codex update` native path (now upstream on `t3code/codex-turn-mapping`)
 - Cursor Fast Mode default off
 - Grok: discard resume cursor when thread cwd/worktree changes
 - Cursor/ACP session resume + provider session recovery (if still missing)
