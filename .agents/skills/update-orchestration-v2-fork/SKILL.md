@@ -38,7 +38,6 @@ Re-port these after every reset. They are not on `t3code/codex-turn-mapping`.
 - **Cursor SDK on disk, not inlined.** Pin a working `@cursor/sdk` in `apps/server/package.json` (currently 1.0.31; upstream is often older). Add `"@cursor/"` to `CLI_RUNTIME_EXTERNAL_PREFIXES` in `scripts/lib/cli-external-packages.ts` plus the matching tests. Inlining the SDK rewrites its webpack chunk imports to files the bundle never emits, so `Cursor.models.list` / `Cursor.me` fail with `ERR_MODULE_NOT_FOUND`. After a version bump, regenerate only that lockfile slice (`pnpm install --no-frozen-lockfile`).
 - **Env-driven EAS / simulator dev client.** `apps/mobile/app.config.ts`, `eas.json`, `package.json`, and `plugins/withIosSimulatorArm64Only.cjs`. Read `T3CODE_EAS_PROJECT_ID`, `T3CODE_EAS_OWNER`, `T3CODE_APPLE_TEAM_ID`, and `T3CODE_IOS_BUNDLE_IDENTIFIER` instead of pingdotgg IDs; add the `development:simulator` profile and exclude x86_64 simulator arch so GhosttyKit (arm64-only) still copies on EAS simulator builds.
 - **Browser tab title.** `apps/web/src/routes/__root.tsx` uses `APP_BASE_NAME` for `document.title` and the head title, not `APP_DISPLAY_NAME` / the nightly stage label.
-- **`CLAUDE.local.md`.** Restore fork remotes, main-sync notes, and the effect-patch lockfile rule. Not tracked upstream. Overlay lives in this skill, not there.
 - **`*.a binary` in `.gitattributes`.** `text=auto` would corrupt vendored static libraries.
 
 ## Migration surgery (live `~/.t3`)
