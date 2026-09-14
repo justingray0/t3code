@@ -27,7 +27,7 @@ Do not treat `backup/codex-turn-mapping-pre-rebase-*` as latest. Those are old s
 2. Save a local backup branch of the current `orchestration-v2-fork` tip.
 3. Find fork-only work with a **two-dot file diff** against the last _intentionally_ merged upstream v2 snapshot, excluding `.repos`. After upstream force-pushes, commit SHAs will not match; do not use `git log A..B` as the overlay list.
 4. Hard-reset `orchestration-v2-fork` onto latest `t3code/codex-turn-mapping`. History on this branch may be discarded.
-5. Reapply the overlay below. Tell the user if an item landed upstream or is no longer a unique delta; do not silently drop a still-needed behavior.
+5. Reapply the overlay below. Skip anything else. If an item on the list looks unnecessary on the new tree, confirm with the user and then remove it from this list before dropping it.
 
 ## Fork overlay still required
 
@@ -40,17 +40,6 @@ Re-port these after every reset. They are not on `t3code/codex-turn-mapping`.
 - **Browser tab title.** `apps/web/src/routes/__root.tsx` uses `APP_BASE_NAME` for `document.title` and the head title, not `APP_DISPLAY_NAME` / the nightly stage label.
 - **`CLAUDE.local.md`.** Restore fork remotes, lockfile-patch notes, and the overlay checklist. Not tracked upstream.
 - **`*.a binary` in `.gitattributes`.** `text=auto` would corrupt vendored static libraries.
-
-Skip these; they are already on latest upstream v2:
-
-- Drop Grok `skills-reload` ACP responses with non-numeric JSON-RPC ids (`packages/effect-acp`).
-- Codex standalone `codex update` installer path.
-
-Verify, but do not invent a port unless the new tree is missing them:
-
-- Cursor Fast Mode default off (catalog currently follows the SDK default).
-- Grok discarding a resume cursor when thread cwd/worktree changes.
-- Cursor/ACP session resume and provider session recovery.
 
 ## Migration surgery (live `~/.t3`)
 
