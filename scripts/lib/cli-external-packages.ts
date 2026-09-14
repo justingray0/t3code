@@ -48,6 +48,14 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   // becoming real if either is ever declared as a dependency.
   "bufferutil",
   "utf-8-validate",
+  // @cursor/sdk ships a webpack-split ESM graph (`import("./642.js")` and
+  // platform optional natives under `@cursor/sdk-*`). Inlining the entry into
+  // dist/bin.mjs rewrites those chunk loads to dist/642.js, which is never
+  // emitted, so Cursor.models.list / Cursor.me fail with ERR_MODULE_NOT_FOUND
+  // before any API call. Keep the package on disk so its chunks resolve next
+  // to the real entry. Ordinary JS deps (zod, connect, …) stay bundleable;
+  // the sidecar stages `@cursor/sdk` and pnpm installs those deps beside it.
+  "@cursor/",
 ] as const;
 
 /**
