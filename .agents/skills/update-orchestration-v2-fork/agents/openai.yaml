@@ -1,0 +1,4 @@
+interface:
+  display_name: "Update orchestration-v2-fork"
+  short_description: "Reset the v2 fork onto latest upstream and remap migrations"
+  default_prompt: "Use $update-orchestration-v2-fork to update orchestration-v2-fork onto latest upstream orchestration v2, reapply the fork overlay, and remap live migrations."
