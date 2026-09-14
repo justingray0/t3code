@@ -27,8 +27,30 @@ Do not treat `backup/codex-turn-mapping-pre-rebase-*` as latest. Those are old s
 2. Save a local backup branch of the current `orchestration-v2-fork` tip.
 3. Find fork-only work with a **two-dot file diff** against the last _intentionally_ merged upstream v2 snapshot, excluding `.repos`. After upstream force-pushes, commit SHAs will not match; do not use `git log A..B` as the overlay list.
 4. Hard-reset `orchestration-v2-fork` onto latest `t3code/codex-turn-mapping`. History on this branch may be discarded.
-5. Reapply overlay that is still a unique delta. Source of truth for the checklist is [`CLAUDE.local.md`](../../../CLAUDE.local.md). Tell the user about items that are now upstream or no longer present as a unique delta; do not silently drop a still-needed behavior.
-6. If `@cursor/sdk` was bumped, keep `@cursor/` external in `scripts/lib/cli-external-packages.ts` and regenerate only the lockfile entries for that bump (`pnpm install --no-frozen-lockfile`). Do not take an unrelated lockfile wholesale.
+5. Reapply the overlay below. Tell the user if an item landed upstream or is no longer a unique delta; do not silently drop a still-needed behavior.
+
+## Fork overlay still required
+
+Re-port these after every reset. They are not on `t3code/codex-turn-mapping`.
+
+- **Tailscale Serve auth.** `apps/server/src/auth/EnvironmentAuthPolicy.ts` (and its test). `--tailscale-serve` keeps `config.host` on loopback, so without `config.tailscaleServeEnabled || isRemoteReachableHost(...)` the server uses `loopback-browser` auth and tailnet clients cannot pair.
+- **Disabled GitHub Actions.** Rename every `.github/workflows/*.yml` to `*.yml.disabled`. This fork must not run pingdotgg workflows.
+- **Cursor SDK on disk, not inlined.** Pin a working `@cursor/sdk` in `apps/server/package.json` (currently 1.0.31; upstream is often older). Add `"@cursor/"` to `CLI_RUNTIME_EXTERNAL_PREFIXES` in `scripts/lib/cli-external-packages.ts` plus the matching tests. Inlining the SDK rewrites its webpack chunk imports to files the bundle never emits, so `Cursor.models.list` / `Cursor.me` fail with `ERR_MODULE_NOT_FOUND`. After a version bump, regenerate only that lockfile slice (`pnpm install --no-frozen-lockfile`).
+- **Env-driven EAS / simulator dev client.** `apps/mobile/app.config.ts`, `eas.json`, `package.json`, and `plugins/withIosSimulatorArm64Only.cjs`. Read `T3CODE_EAS_PROJECT_ID`, `T3CODE_EAS_OWNER`, `T3CODE_APPLE_TEAM_ID`, and `T3CODE_IOS_BUNDLE_IDENTIFIER` instead of pingdotgg IDs; add the `development:simulator` profile and exclude x86_64 simulator arch so GhosttyKit (arm64-only) still copies on EAS simulator builds.
+- **Browser tab title.** `apps/web/src/routes/__root.tsx` uses `APP_BASE_NAME` for `document.title` and the head title, not `APP_DISPLAY_NAME` / the nightly stage label.
+- **`CLAUDE.local.md`.** Restore fork remotes, lockfile-patch notes, and the overlay checklist. Not tracked upstream.
+- **`*.a binary` in `.gitattributes`.** `text=auto` would corrupt vendored static libraries.
+
+Skip these; they are already on latest upstream v2:
+
+- Drop Grok `skills-reload` ACP responses with non-numeric JSON-RPC ids (`packages/effect-acp`).
+- Codex standalone `codex update` installer path.
+
+Verify, but do not invent a port unless the new tree is missing them:
+
+- Cursor Fast Mode default off (catalog currently follows the SDK default).
+- Grok discarding a resume cursor when thread cwd/worktree changes.
+- Cursor/ACP session resume and provider session recovery.
 
 ## Migration surgery (live `~/.t3`)
 
