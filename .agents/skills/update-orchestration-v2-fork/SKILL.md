@@ -39,6 +39,7 @@ Re-port these after every reset. They are not on `t3code/codex-turn-mapping`.
 - **Env-driven EAS / simulator dev client.** `apps/mobile/app.config.ts`, `eas.json`, `package.json`, and `plugins/withIosSimulatorArm64Only.cjs`. Read `T3CODE_EAS_PROJECT_ID`, `T3CODE_EAS_OWNER`, `T3CODE_APPLE_TEAM_ID`, and `T3CODE_IOS_BUNDLE_IDENTIFIER` instead of pingdotgg IDs; add the `development:simulator` profile and exclude x86_64 simulator arch so GhosttyKit (arm64-only) still copies on EAS simulator builds.
 - **Browser tab title.** `apps/web/src/routes/__root.tsx` uses `APP_BASE_NAME` for `document.title` and the head title, not `APP_DISPLAY_NAME` / the nightly stage label.
 - **`*.a binary` in `.gitattributes`.** `text=auto` would corrupt vendored static libraries.
+- **This skill.** Restore `.agents/skills/update-orchestration-v2-fork/` (`SKILL.md` and `agents/openai.yaml`) from the pre-reset backup. Upstream does not carry it; without it the next sync has no overlay list.
 
 ## Migration surgery (live `~/.t3`)
 
