@@ -3,3 +3,6 @@
 # Batch files need CRLF for cmd.exe to parse them reliably.
 *.cmd text eol=crlf
 *.bat text eol=crlf
+
+# Vendored static libraries must stay binary (text=auto would corrupt them).
+*.a binary
