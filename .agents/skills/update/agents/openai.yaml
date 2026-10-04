@@ -1,0 +1,4 @@
+interface:
+  display_name: "Update"
+  short_description: "Merge upstream main into our main and keep our changes"
+  default_prompt: "Use $update to bring our main up to date with upstream main and keep our changes."
